@@ -1,0 +1,31 @@
+name: Lint
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install the package with development dependencies
+          pip install -e ".[dev]"
+      - name: Lint with ruff
+        run: |
+          ruff check .
+      - name: Lint with pylint
+        run: |
+          pylint --fail-under=9 src/
+      - name: Format check with yapf
+        run: |
+          yapf --diff --recursive src/

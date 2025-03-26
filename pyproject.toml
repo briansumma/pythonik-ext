@@ -1,0 +1,388 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pythonik-ext"
+version = "2025.3-beta"
+description = "Extensions and enhancements for the pythonik client library"
+readme = "README.md"
+authors = [{ name = "Brian Summa", email = "brian.f.summa@chesa.com" }]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+keywords = ["iconik", "api", "pythonik", "extensions"]
+dependencies = [
+    "nsa-pythonik==1.9.4",
+]
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = [
+    "ruff~=0.11.2",
+    "pylint~=3.3.6",
+    "yapf~=0.43.0",
+    "pytest~=7.4.0",
+    "build~=1.0.3",
+    "twine~=4.0.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/briansumma/pythonik-ext"
+Issues = "https://github.com/briansumma/pythonik-ext/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+# Ruff configuration - updated for current version
+[tool.ruff]
+# Basic configuration
+line-length = 80
+indent-width = 4
+target-version = "py39"
+
+# Exclude patterns
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "CVS",
+    "third_party"  # From pylint config
+]
+
+# Format settings
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# Lint settings
+[tool.ruff.lint]
+# Lint rules selection
+extend-select = [
+    "D419", # empty-docstring
+    "E501", # line-too-long
+    "W291", # trailing-whitespace
+    "PLC0414", # useless-import-alias
+    "PLC2401", # non-ascii-name
+    "PLC2801", # unnecessary-dunder-call
+    "PLC3002", # unnecessary-direct-lambda-call
+    # "E999" has been removed and cannot be selected
+    "PLE0101", # return-in-init
+    "F706", # return-outside-function
+    "F704", # yield-outside-function
+    "PLE0115", # nonlocal-and-global
+    "PLE0116", # continue-in-finally
+    "PLE0117", # nonlocal-without-binding
+    "PLE0241", # duplicate-bases
+    "PLE0302", # unexpected-special-method-signature
+    "PLE0604", # invalid-all-object
+    "PLE0605", # invalid-all-format
+    "PLE0643", # potential-index-error
+    "PLE0704", # misplaced-bare-raise
+    "PLE1141", # dict-iter-missing-items
+    "PLE1142", # await-outside-async
+    "PLE1205", # logging-too-many-args
+    "PLE1206", # logging-too-few-args
+    "PLE1307", # bad-string-format-type
+    "PLE1310", # bad-str-strip-call
+    "PLE1507", # invalid-envvar-value
+    "PLE1519", # singledispatch-method
+    "PLE1520", # singledispatchmethod-function
+    "PLE2502", # bidirectional-unicode
+    "PLE2510", # invalid-character-backspace
+    "PLE2512", # invalid-character-sub
+    "PLE2513", # invalid-character-esc
+    "PLE2514", # invalid-character-nul
+    "PLE2515", # invalid-character-zero-width-space
+    "PLE4703", # modified-iterating-set
+    "PLR0124", # comparison-with-itself
+    "PLR0202", # no-classmethod-decorator
+    "PLR0203", # no-staticmethod-decorator
+    "UP004", # useless-object-inheritance
+    "PLR0206", # property-with-parameters
+    "PLR0916", # too-many-boolean-expressions
+    "PLR0917", # too-many-positional-arguments
+    "PLR1702", # too-many-nested-blocks
+    "PLR1704", # redefined-argument-from-local
+    "PLR1711", # useless-return
+    "C416", # unnecessary-comprehension
+    "PLR1733", # unnecessary-dict-index-lookup
+    "PLR1736", # unnecessary-list-index-lookup
+    "PLW0108", # unnecessary-lambda
+    "PLW0120", # useless-else-on-loop
+    "PLW0127", # self-assigning-variable
+    "PLW0128", # redeclared-assigned-name
+    "PLW0129", # assert-on-string-literal
+    "B033", # duplicate-value
+    "PLW0131", # named-expr-without-context
+    "PLW0177", # nan-comparison
+    "PLW0211", # bad-staticmethod-argument
+    "PLW0244", # redefined-slots-in-subclass
+    "PLW0245", # super-without-brackets
+    "PLW0406", # import-self
+    "PLW0602", # global-variable-not-assigned
+    "PLW0603", # global-statement
+    "PLW0604", # global-at-module-level
+    "F401", # unused-import
+    "F841", # unused-variable
+    "E722", # bare-except
+    "PLW0711", # binary-op-exception
+    "PLW1501", # bad-open-mode
+    "PLW1507", # shallow-copy-environ
+    "PLW1508", # invalid-envvar-default
+    "PLW1509", # subprocess-popen-preexec-fn
+    "PLW1514", # unspecified-encoding
+    "PLW2101", # useless-with-lock
+    "PLW3301", # nested-min-max
+    "N803", # argument-name-lowercase (matches snake_case style)
+    "N806", # variable-name-mixedcase (matches snake_case style)
+    "N815", # mixed-case variable in class scope (matches class const naming)
+    "N816", # mixed-case variable in global scope (matches const naming)
+    "N817", # camelcase import as constant (matches const naming)
+]
+
+# Rules to ignore
+ignore = [
+    "PLR0904", # too-many-public-methods
+    "PLR0911", # too-many-return-statements
+    "PLR0912", # too-many-branches
+    "PLR0913", # too-many-arguments
+    "PLR0914", # too-many-locals
+    "PLR0915", # too-many-statements
+    "D100", # missing-module-docstring
+    "D101", # missing-class-docstring
+    "D103", # missing-function-docstring
+    "N", # naming (we'll configure specific naming rules below)
+    "E203", # whitespace before ':' (Black formats this differently)
+]
+
+# Per-file ignores
+per-file-ignores = { "**/test_*.py" = ["D", "PLR2004"], "**/conftest.py" = ["D"], "**/__init__.py" = ["D104"], "tests/*" = ["D"] }
+
+# Doc-related config
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+# Matching patterns
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "single"
+
+[tool.ruff.lint.isort]
+known-third-party = ["enchant"]
+
+# Function naming pattern
+[tool.ruff.lint.flake8-builtins]
+builtins-ignorelist = ["id", "type", "format"]
+
+# Naming conventions
+[tool.ruff.lint.pep8-naming]
+ignore-names = ["setUp", "tearDown", "setUpClass", "tearDownClass", "setUpModule", "tearDownModule"]
+classmethod-decorators = ["classmethod"]
+staticmethod-decorators = ["staticmethod"]
+
+# Matching pylint design metrics
+[tool.ruff.lint.mccabe]
+max-complexity = 12  # Based on max-branches in pylint config
+
+# PyLint configuration
+[tool.pylint.main]
+ignore = ["CVS", "third_party"]
+ignore-patterns = ["^\\.#"]
+py-version = "3.9"
+jobs = 1
+limit-inference-results = 100
+suggestion-mode = true
+fail-under = 10
+persistent = true
+
+[tool.pylint.basic]
+argument-naming-style = "snake_case"
+attr-naming-style = "snake_case"
+bad-names = ["foo", "bar", "baz", "toto", "tutu", "tata"]
+class-attribute-naming-style = "any"
+class-const-naming-style = "UPPER_CASE"
+class-naming-style = "PascalCase"
+const-naming-style = "UPPER_CASE"
+docstring-min-length = -1
+function-naming-style = "snake_case"
+function-rgx = "([a-z_][a-z0-9_]{2,30}|main)$"
+good-names = ["fd", "fp", "i", "j", "_"]
+inlinevar-naming-style = "any"
+method-naming-style = "snake_case"
+module-naming-style = "snake_case"
+no-docstring-rgx = "(__.*__|main|test.*|.*test|.*Test)$"
+property-classes = ["abc.abstractproperty"]
+variable-naming-style = "snake_case"
+
+[tool.pylint.classes]
+defining-attr-methods = ["__init__", "__new__", "setUp", "asyncSetUp", "__post_init__"]
+exclude-protected = ["_asdict", "_fields", "_replace", "_source", "_make", "os._exit"]
+valid-classmethod-first-arg = ["cls", "class_"]
+valid-metaclass-classmethod-first-arg = ["mcs"]
+
+[tool.pylint.design]
+max-args = 5
+max-attributes = 7
+max-bool-expr = 5
+max-branches = 12
+max-locals = 15
+max-parents = 10
+max-positional-arguments = 5
+max-public-methods = 20
+max-returns = 6
+max-statements = 50
+min-public-methods = 2
+
+[tool.pylint.exceptions]
+overgeneral-exceptions = ["builtins.BaseException", "builtins.Exception"]
+
+[tool.pylint.format]
+ignore-long-lines = "(?x)(\n^\\s*(\\#\\ )?<?https?://\\S+>?$|\n^\\s*(from\\s+\\S+\\s+)?import\\s+.+$)"
+indent-after-paren = 4
+indent-string = "    "
+max-line-length = 80
+max-module-lines = 1000
+
+[tool.pylint.imports]
+deprecated-modules = ["regsub", "TERMIOS", "Bastion", "rexec", "optparse"]
+known-third-party = ["enchant"]
+
+[tool.pylint.logging]
+logging-format-style = "old"
+logging-modules = ["logging"]
+
+[tool.pylint."messages control"]
+confidence = ["HIGH", "CONTROL_FLOW", "INFERENCE", "INFERENCE_FAILURE", "UNDEFINED"]
+disable = [
+    "raw-checker-failed",
+    "bad-inline-option",
+    "locally-disabled",
+    "file-ignored",
+    "suppressed-message",
+    "useless-suppression",
+    "deprecated-pragma",
+    "use-symbolic-message-instead",
+    "use-implicit-booleaness-not-comparison-to-string",
+    "use-implicit-booleaness-not-comparison-to-zero",
+    "invalid-name",
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-many-lines",
+    "no-member",
+    "too-many-instance-attributes",
+    "too-few-public-methods",
+    "too-many-return-statements",
+    "too-many-branches",
+    "too-many-arguments",
+    "too-many-locals",
+    "too-many-statements",
+    "exec-used",
+    "fixme",
+    "broad-exception-caught",
+    "too-many-public-methods"
+]
+
+[tool.pylint.method_args]
+timeout-methods = [
+    "requests.api.delete",
+    "requests.api.get",
+    "requests.api.head",
+    "requests.api.options",
+    "requests.api.patch",
+    "requests.api.post",
+    "requests.api.put",
+    "requests.api.request"
+]
+
+[tool.pylint.miscellaneous]
+notes = ["FIXME", "XXX", "TODO"]
+
+[tool.pylint.refactoring]
+max-nested-blocks = 5
+never-returning-functions = ["sys.exit", "argparse.parse_error"]
+suggest-join-with-non-empty-separator = true
+
+[tool.pylint.reports]
+evaluation = "max(0, 0 if fatal else 10.0 - ((float(5 * error + warning + refactor + convention) / statement) * 10))"
+score = true
+
+[tool.pylint.similarities]
+ignore-comments = true
+ignore-docstrings = true
+ignore-imports = true
+ignore-signatures = true
+min-similarity-lines = 20
+
+[tool.pylint.spelling]
+max-spelling-suggestions = 4
+spelling-ignore-comment-directives = "fmt: on,fmt: off,noqa:,noqa,nosec,isort:skip,mypy:"
+
+[tool.pylint.typecheck]
+contextmanager-decorators = ["contextlib.contextmanager"]
+generated-members = "REQUEST,\nacl_users,\naq_parent,\nAndRaise,\nAndReturn,\nInAnyOrder,\nMultipleTimes,\ntempdir"
+ignore-none = true
+ignore-on-opaque-inference = true
+ignored-checks-for-mixins = ["no-member", "not-async-context-manager", "not-context-manager", "attribute-defined-outside-init"]
+ignored-classes = ["optparse.Values", "thread._local", "_thread._local", "argparse.Namespace"]
+missing-member-hint = true
+missing-member-hint-distance = 1
+missing-member-max-choices = 1
+mixin-class-rgx = ".*[Mm]ixin"
+
+[tool.pylint.variables]
+allow-global-unused-variables = true
+callbacks = ["cb_", "_cb"]
+dummy-variables-rgx = "_|unused_"
+ignored-argument-names = "_.*|^ignored_|^unused_"
+redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
+
+# YAPF configuration
+[tool.yapf]
+based_on_style = "pep8"
+spaces_before_comment = 2
+split_before_logical_operator = true
+column_limit = 80
+indent_width = 4
+continuation_indent_width = 4
+dedent_closing_brackets = true
+allow_split_before_dict_value = false
+coalesce_brackets = true
+join_multiple_lines = false
+space_between_ending_comma_and_closing_bracket = false
+split_before_named_assigns = true
+split_complex_comprehension = true
+
+# Prettier configuration for Markdown files
+[tool.prettier]
+prose_wrap = "always"
+print_width = 72
