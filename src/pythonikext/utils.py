@@ -55,3 +55,17 @@ def calculate_md5(file_path: Union[str, Path], chunk_size: int = 8192) -> str:
         raise IOError(f"Error reading file {file_path}: {str(e)}") from e
 
     return md5_hash.hexdigest()
+
+
+def get_mountpoint(path: str) -> str:
+    """Get the mountpoint for a given path by detecting device changes."""
+    path = os.path.abspath(path)
+    orig_dev = os.stat(path).st_dev
+
+    while path != os.sep:
+        parent_path = os.path.dirname(path)
+        if os.stat(parent_path).st_dev != orig_dev:
+            break
+        path = parent_path
+
+    return path
