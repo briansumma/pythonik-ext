@@ -9,7 +9,7 @@ from .client import PythonikClient, ExtendedPythonikClient
 from .specs.files import ExtendedFilesSpec
 from .utils import calculate_md5, suppress_stdout
 
-__version__ = "2025.3-beta"
+__version__ = "2025.3.1-beta"
 __all__ = [
     "PythonikClient",
     "ExtendedPythonikClient",
