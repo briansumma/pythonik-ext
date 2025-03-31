@@ -17,7 +17,7 @@ from pythonik.models.mutation.metadata.mutate import UpdateMetadata, \
 from pythonik.specs.assets import AssetSpec
 
 from ..client import ExtendedPythonikClient as PythonikClient
-from ..utils import calculate_md5, suppress_stdout, get_mountpoint
+from ..utils import calculate_md5, get_mountpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1319,6 +1319,15 @@ def _parse_arguments() -> argparse.Namespace:
         '--debug', action='store_true', help='Enable debug logging'
     )
 
+    # Request options
+    log_group = parser.add_argument_group('Request')
+    log_group.add_argument(
+        '--timeout',
+        default=60,
+        type=int,
+        help='Maximum wait time (in seconds) for a request to complete'
+    )
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -1389,7 +1398,7 @@ def main():
     client = PythonikClient(
         app_id=args.app_id,
         auth_token=args.auth_token,
-        timeout=60,
+        timeout=args.timeout,
         base_url=args.base_url
     )
 
@@ -1408,51 +1417,50 @@ def main():
     )
 
     # Create asset
-    with suppress_stdout():
-        try:
-            result = recipe.create_asset(
-                file_path=args.file_path,
-                external_id=args.external_id,
-                metadata=metadata,
-                view_id=args.view_id,
-                collection_ids=args.collection_ids
+    try:
+        result = recipe.create_asset(
+            file_path=args.file_path,
+            external_id=args.external_id,
+            metadata=metadata,
+            view_id=args.view_id,
+            collection_ids=args.collection_ids
+        )
+
+        print("\nAsset creation complete!")
+        print(f"Asset ID: {result['asset_id']}")
+        print(f"Format ID: {result['format_id']}")
+        print(f"File Set ID: {result['file_set_id']}")
+        print(f"File ID: {result['file_id']}")
+
+        if result.get("metadata_applied") is True:
+            print("Metadata successfully applied")
+
+        if result.get("added_collections"):
+            print(
+                f"Added to collections: {', '.join(result['added_collections'])}"
             )
 
-            print("\nAsset creation complete!")
-            print(f"Asset ID: {result['asset_id']}")
-            print(f"Format ID: {result['format_id']}")
-            print(f"File Set ID: {result['file_set_id']}")
-            print(f"File ID: {result['file_id']}")
+        if result.get("mediainfo_job") == "skipped":
+            print("Mediainfo extraction skipped - already exists")
+        elif result.get("mediainfo_job") is True:
+            print("Mediainfo extraction triggered")
 
-            if result.get("metadata_applied") is True:
-                print("Metadata successfully applied")
+        if result.get("proxy_job") == "skipped":
+            print("Proxy/keyframe generation skipped - already exists")
+        elif result.get("proxy_job") is True:
+            print("Proxy/keyframe generation triggered")
 
-            if result.get("added_collections"):
-                print(
-                    f"Added to collections: {', '.join(result['added_collections'])}"
-                )
+        if result.get("transcoding_skipped"):
+            print("Transcoding skipped - file matches ignore pattern")
 
-            if result.get("mediainfo_job") == "skipped":
-                print("Mediainfo extraction skipped - already exists")
-            elif result.get("mediainfo_job") is True:
-                print("Mediainfo extraction triggered")
+        if result.get("history_created"):
+            print(
+                f"History created with operation type: {result.get('history_operation_type', 'CUSTOM')}"
+            )
 
-            if result.get("proxy_job") == "skipped":
-                print("Proxy/keyframe generation skipped - already exists")
-            elif result.get("proxy_job") is True:
-                print("Proxy/keyframe generation triggered")
-
-            if result.get("transcoding_skipped"):
-                print("Transcoding skipped - file matches ignore pattern")
-
-            if result.get("history_created"):
-                print(
-                    f"History created with operation type: {result.get('history_operation_type', 'CUSTOM')}"
-                )
-
-        except Exception as e:
-            logger.error("Error creating asset: %s", str(e))
-            sys.exit(1)
+    except Exception as e:
+        logger.error("Error creating asset: %s", str(e))
+        sys.exit(1)
 
 
 if __name__ == "__main__":
