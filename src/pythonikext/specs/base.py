@@ -1,22 +1,28 @@
 """Base spec extensions for pythonik."""
 
 import logging
-from typing import Type, Optional
+from typing import Optional, Type
 
 from pydantic import BaseModel
 from pythonik.models.base import Response as PythonikResponse
-from pythonik.specs.base import Spec as OriginalSpec
+from pythonik.specs.base import Spec as OriginalSpecBase
 from requests import Request, Response
 
-# Configure logging
+
 logging.basicConfig(
     level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
 
-class ExtendedSpecBase(OriginalSpec):
-    """Base class for extended specs with improved logging and error handling."""  # noqa: E501
+class ExtendedSpecBase(OriginalSpecBase):
+    """
+    Base class for extended specs with improved logging and error handling.
+
+    This class enhances the original Pythonik spec base with:
+    - Better logging using the logging module instead of print statements
+    - Improved error handling and request preparation
+    """
 
     @staticmethod
     def parse_response(
@@ -25,15 +31,14 @@ class ExtendedSpecBase(OriginalSpec):
     ) -> PythonikResponse:
         """
         Enhanced response parser that uses logging instead of print statements.
-        
+
         Args:
             response: The HTTP response from the API
             model: Optional Pydantic model to validate the response against
-            
+
         Returns:
             PythonikResponse object containing the parsed response
         """
-        # Log response info instead of printing to stdout
         if response.ok:
             logger.debug(response.text)
             if model:
@@ -46,12 +51,12 @@ class ExtendedSpecBase(OriginalSpec):
     def send_request(self, method, path, **kwargs) -> Response:
         """
         Enhanced request sender with better logging.
-        
+
         Args:
             method: HTTP method to use
             path: API endpoint path
             **kwargs: Additional arguments to pass to the request
-            
+
         Returns:
             Response object from the API
         """

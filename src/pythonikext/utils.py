@@ -4,7 +4,7 @@ import hashlib
 import os
 from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
-from typing import Union, NoReturn
+from typing import NoReturn, Union
 
 
 @contextmanager
