@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pythonik-ext"
-version = "2025.3.1-beta"
+version = "2025.4-beta"
 description = "Extensions and enhancements for the pythonik client library"
 readme = "README.md"
 authors = [{ name = "Brian Summa", email = "brian.f.summa@chesa.com" }]
@@ -30,9 +30,17 @@ dev = [
     "ruff~=0.11.2",
     "pylint~=3.3.6",
     "yapf~=0.43.0",
+    "isort~=5.13.2",
     "pytest~=7.4.0",
     "build~=1.0.3",
     "twine~=4.0.2",
+    "python-json-logger==3.3.0",
+]
+logging = [
+    "python-json-logger==3.3.0",
+]
+all = [
+    "python-json-logger==3.3.0",
 ]
 
 [project.urls]
@@ -381,8 +389,42 @@ join_multiple_lines = false
 space_between_ending_comma_and_closing_bracket = false
 split_before_named_assigns = true
 split_complex_comprehension = true
+# Add these new settings to fix the blank lines conflict with isort
+blank_lines_between_top_level_imports_and_variables = 2
+blank_line_before_nested_class_or_def = true
+blank_line_before_class_docstring = false
+blank_line_before_module_docstring = false
 
 # Prettier configuration for Markdown files
 [tool.prettier]
 prose_wrap = "always"
 print_width = 72
+
+# isort configuration
+[tool.isort]
+# Use the PyCharm profile for compatibility with PyCharm's Optimize Imports
+profile = "pycharm"
+# Standard line length matching your existing configuration
+line_length = 80
+# Configure multi-line import formatting
+multi_line_output = 3
+include_trailing_comma = true
+# Force parentheses on multi-line imports
+use_parentheses = true
+# Ensure that imports are grouped properly
+force_grid_wrap = 0
+ensure_newline_before_comments = true
+# Add 2 blank lines after imports (PyCharm style)
+lines_after_imports = 2
+# Sort case-insensitively (PyCharm behavior)
+case_sensitive = false
+# Enable balanced wrapping for cleaner multi-line imports
+balanced_wrapping = true
+# Add any project-specific known first/third-party modules
+known_first_party = ["pythonikext"]
+# Skip virtual environment directories
+skip_glob = ["**/venv/**", "**/.venv/**", "**/env/**", "**/.env/**"]
+# Match your Ruff configuration
+known_third_party = ["enchant"]
+# Section ordering
+sections = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
