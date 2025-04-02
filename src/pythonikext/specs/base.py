@@ -1,6 +1,5 @@
 """Base spec extensions for pythonik."""
 
-import logging
 from typing import Optional, Type
 
 from pydantic import BaseModel
@@ -8,11 +7,11 @@ from pythonik.models.base import Response as PythonikResponse
 from pythonik.specs.base import Spec as OriginalSpecBase
 from requests import Request, Response
 
+from .._logging import configure_logging, get_logger
 
-logging.basicConfig(
-    level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+# Configure logging with defaults
+configure_logging()
+logger = get_logger(__name__)
 
 
 class ExtendedSpecBase(OriginalSpecBase):

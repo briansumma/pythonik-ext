@@ -34,6 +34,13 @@ dev = [
     "pytest~=7.4.0",
     "build~=1.0.3",
     "twine~=4.0.2",
+    "python-json-logger==3.3.0",
+]
+logging = [
+    "python-json-logger==3.3.0",
+]
+all = [
+    "python-json-logger==3.3.0",
 ]
 
 [project.urls]

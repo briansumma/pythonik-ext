@@ -22,7 +22,7 @@ jobs:
           pip install -e ".[dev]"
       - name: Lint with ruff
         run: |
-          ruff check .
+          ruff check src/
       - name: Lint with pylint
         run: |
           pylint --fail-under=9 src/
