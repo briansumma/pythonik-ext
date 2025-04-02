@@ -35,6 +35,12 @@ dev = [
     "build~=1.0.3",
     "twine~=4.0.2",
 ]
+logging = [
+    "python-json-logger==3.3.0",
+]
+all = [
+    "python-json-logger==3.3.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/briansumma/pythonik-ext"
