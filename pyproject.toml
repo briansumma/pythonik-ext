@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pythonik-ext"
-version = "2025.4-beta"
+version = "2025.4.1-beta"
 description = "Extensions and enhancements for the pythonik client library"
 readme = "README.md"
 authors = [{ name = "Brian Summa", email = "brian.f.summa@chesa.com" }]
@@ -190,6 +190,7 @@ ignore = [
     "D103", # missing-function-docstring
     "N", # naming (we'll configure specific naming rules below)
     "E203", # whitespace before ':' (Black formats this differently)
+    "E501", # line-too-long
 ]
 
 # Per-file ignores

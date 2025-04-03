@@ -57,7 +57,7 @@ def calculate_md5(file_path: Union[str, Path], chunk_size: int = 8192) -> str:
     return md5_hash.hexdigest()
 
 
-def get_mountpoint(path: str) -> str:
+def get_mount_point(path: str) -> str:
     """Get the mountpoint for a given path by detecting device changes."""
     path = os.path.abspath(path)
     orig_dev = os.stat(path).st_dev

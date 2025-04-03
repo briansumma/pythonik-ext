@@ -6,28 +6,26 @@ import os
 import re
 import sys
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pythonik.models.assets.assets import AssetCreate
 from pythonik.models.base import PaginatedResponse
 from pythonik.models.files.file import FileCreate, FileStatus, FileType
 from pythonik.models.files.format import FormatCreate
-from pythonik.models.mutation.metadata.mutate import UpdateMetadata, \
-    MetadataValues
-from pythonik.specs.assets import AssetSpec
-
-from ..client import ExtendedPythonikClient as PythonikClient
-from ..utils import calculate_md5, get_mountpoint
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+from pythonik.models.mutation.metadata.mutate import (
+    MetadataValues,
+    UpdateMetadata,
 )
-logger = logging.getLogger(__name__)
+
+from .._internal_utils import get_attribute, normalize_pattern
+from .._logging import get_logger
+from ..client import ExtendedPythonikClient as PythonikClient
+from ..exceptions import GeneralException
+from ..specs.assets import ExtendedAssetSpec as AssetSpec
+from ..utils import calculate_md5
 
 
-class GeneralException(Exception):
-    """Base class for general or unknown errors."""
+logger = get_logger(__name__)
 
 
 class IconikStorageGatewayRecipe:
@@ -360,13 +358,13 @@ class IconikStorageGatewayRecipe:
     def _check_file_validity(self, file_path: str) -> Dict[str, Any]:
         """
         Check file validity and gather basic information.
-        
+
         Args:
             file_path: Path to the file
-            
+
         Returns:
             Dictionary with file info
-            
+
         Raises:
             FileNotFoundError: If the file does not exist
             ValueError: If the file matches a scan_ignore pattern
@@ -374,13 +372,16 @@ class IconikStorageGatewayRecipe:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        logger.debug("storage_settings: %s", self.storage_settings)
+        logger.debug(
+            "storage_settings: %s", json.dumps(self.storage_settings, indent=4)
+        )
 
         file_checksum = calculate_md5(file_path)
         file_name = os.path.basename(file_path)
         file_size = os.path.getsize(file_path)
         file_stem, _ = os.path.splitext(file_name)
-        mount_point = get_mountpoint(file_path)
+        mount_point = self.mount_point
+        logger.debug("mount_point: %s", mount_point)
         title_includes_extension = self.storage_settings.get(
             'title_includes_extension', True
         )
@@ -397,6 +398,9 @@ class IconikStorageGatewayRecipe:
         # Check scan_ignore patterns
         scan_ignore = self.storage_settings.get('scan_ignore', [])
         for pattern in scan_ignore:
+            logger.debug("pattern in scan_ignore: %s", pattern)
+            pattern = normalize_pattern(pattern)
+            logger.debug("normalized pattern in scan_ignore: %s", pattern)
             if pattern.startswith('re:'):
                 regex = pattern[4:].rstrip('/')
                 if re.search(regex, file_name):
@@ -432,17 +436,19 @@ class IconikStorageGatewayRecipe:
     def _resolve_external_id(self, file_info: Dict[str, Any]) -> str:
         """
         Resolve external ID based on settings and file info.
-        
+
         Args:
             file_info: Dictionary with file information
-            
+
         Returns:
             External ID string
         """
         if self.storage_settings.get('filename_is_external_id', False):
-            external_id = file_info["file_name"]
+            external_id = get_attribute(file_info, "file_name")
         else:
-            external_id = f"{file_info['directory_path']}/{file_info['file_checksum']}"
+            directory_path = get_attribute(file_info, "directory_path")
+            file_checksum = get_attribute(file_info, "file_checksum")
+            external_id = f"{directory_path}/{file_checksum}"
 
         logger.debug("external_id: %s", external_id)
         return external_id
@@ -453,24 +459,24 @@ class IconikStorageGatewayRecipe:
     ) -> Optional[Dict]:
         """
         Merge provided metadata with sidecar metadata.
-        
+
         Args:
             metadata: Provided metadata dictionary
             sidecar_metadata: Sidecar metadata dictionary
-            
+
         Returns:
             Merged metadata dictionary or None
         """
         if not sidecar_metadata:
             return metadata
 
-        logger.debug("sidecar_metadata: %s", sidecar_metadata)
-
         if metadata:
             merged_metadata = {**sidecar_metadata, **metadata}
-            logger.debug("merged_metadata: %s", merged_metadata)
+            logger.info("Merged metadata with metadata sidecar")
+            logger.debug(
+                "merged_metadata: %s", json.dumps(merged_metadata, indent=4)
+            )
             return merged_metadata
-        logger.debug("metadata: %s", sidecar_metadata)
         return sidecar_metadata
 
     def _find_existing_asset(
@@ -478,11 +484,11 @@ class IconikStorageGatewayRecipe:
     ) -> Tuple[Optional[str], bool]:
         """
         Find existing asset by checksum or external ID.
-        
+
         Args:
             external_id: External ID
             file_info: Dictionary with file information
-            
+
         Returns:
             Tuple of (asset_id, asset_existed_before)
         """
@@ -496,16 +502,17 @@ class IconikStorageGatewayRecipe:
         # Check for duplicate files by checksum
         if aggregate_identical:
             duplicate_files = self.check_for_duplicate_files(
-                file_info["file_path"]
+                get_attribute(file_info, "file_path")
             )
 
             if duplicate_files:
                 for file_obj in duplicate_files:
-                    if aggregate_only_same_storage and file_obj[
-                        'storage_id'] != self.storage_id:
+                    if aggregate_only_same_storage and get_attribute(
+                        file_obj, "storage_id"
+                    ) != self.storage_id:
                         continue
 
-                    asset_id = file_obj['asset_id']
+                    asset_id = get_attribute(file_obj, "asset_id")
                     logger.info("Found existing asset with ID: %s", asset_id)
                     return asset_id, True
 
@@ -522,7 +529,7 @@ class IconikStorageGatewayRecipe:
 
             if asset_response.response.ok and asset_response.data.objects:
                 asset = asset_response.data.objects[0]
-                asset_id = asset['id']
+                asset_id = get_attribute(asset, "id")
                 logger.info(
                     "Found existing asset with external ID %s: %s", external_id,
                     asset_id
@@ -538,14 +545,14 @@ class IconikStorageGatewayRecipe:
     ) -> str:
         """
         Create a new asset.
-        
+
         Args:
             file_info: Dictionary with file information
             external_id: External ID
-            
+
         Returns:
             Newly created asset ID
-            
+
         Raises:
             GeneralException: If asset creation fails
         """
@@ -583,13 +590,13 @@ class IconikStorageGatewayRecipe:
     def _ensure_format(self, asset_id: str) -> Tuple[str, bool]:
         """
         Ensure the format exists, creating it if necessary.
-        
+
         Args:
             asset_id: Asset ID
-            
+
         Returns:
             Tuple of (format_id, format_existed_before)
-            
+
         Raises:
             GeneralException: If format creation fails
         """
@@ -600,8 +607,11 @@ class IconikStorageGatewayRecipe:
 
         if format_response.response.ok and format_response.data.objects:
             for format_obj in format_response.data.objects:
-                if format_obj.name == "ORIGINAL" and format_obj.status == "ACTIVE":
-                    format_id = format_obj.id
+                if get_attribute(format_obj,
+                                 "name") == "ORIGINAL" and get_attribute(
+                                     format_obj, "status"
+                                 ) == "ACTIVE":
+                    format_id = get_attribute(format_obj, "id")
                     logger.info("Found existing format with ID: %s", format_id)
                     format_existed_before = True
                     break
@@ -633,15 +643,15 @@ class IconikStorageGatewayRecipe:
     ) -> Tuple[str, bool]:
         """
         Ensure the file set exists, creating it if necessary.
-        
+
         Args:
             asset_id: Asset ID
             format_id: Format ID
             file_info: Dictionary with file information
-            
+
         Returns:
             Tuple of (file_set_id, file_set_existed_before)
-            
+
         Raises:
             GeneralException: If file set creation fails
         """
@@ -653,12 +663,13 @@ class IconikStorageGatewayRecipe:
         if file_sets_response.response.ok and file_sets_response.data.objects:
             for file_set in file_sets_response.data.objects:
                 if (
-                    file_set.base_dir == file_info["directory_path"]
-                    and file_set.storage_id == self.storage_id
-                    and file_set.format_id == format_id
-                    and file_set.status == "ACTIVE"
+                    get_attribute(file_set, "base_dir")
+                    == get_attribute(file_info, "directory_path")
+                    and get_attribute(file_set, "storage_id") == self.storage_id
+                    and get_attribute(file_set, "format_id") == format_id
+                    and get_attribute(file_set, "status") == "ACTIVE"
                 ):
-                    file_set_id = file_set.id
+                    file_set_id = get_attribute(file_set, "id")
                     logger.info(
                         "Found existing file set with ID: %s", file_set_id
                     )
@@ -672,16 +683,16 @@ class IconikStorageGatewayRecipe:
                     file_sets_response.data, 'components'
                 ) and file_sets_response.data.components:
                     component_ids = [
-                        comp.id
+                        get_attribute(comp, "id")
                         for comp in file_sets_response.data.components
                         if hasattr(comp, 'id')
                     ]
 
                 file_set_model = {
-                    'name': file_info["file_name"],
+                    'name': get_attribute(file_info, "file_name"),
                     'format_id': format_id,
                     'storage_id': self.storage_id,
-                    'base_dir': file_info["directory_path"],
+                    'base_dir': get_attribute(file_info, "directory_path"),
                     'component_ids': []
                 }
 
@@ -712,16 +723,16 @@ class IconikStorageGatewayRecipe:
     ) -> Tuple[str, bool]:
         """
         Ensure the file exists, creating it if necessary.
-        
+
         Args:
             asset_id: Asset ID
             format_id: Format ID
             file_set_id: File set ID
             file_info: Dictionary with file information
-            
+
         Returns:
             Tuple of (file_id, file_existed_before)
-            
+
         Raises:
             GeneralException: If file creation fails
         """
@@ -734,11 +745,12 @@ class IconikStorageGatewayRecipe:
         if files_response.response.ok and files_response.data.objects:
             for file_obj in files_response.data.objects:
                 if (
-                    file_obj.file_set_id == file_set_id
-                    and file_obj.format_id == format_id
-                    and file_obj.name == file_info["file_name"]
+                    get_attribute(file_obj, "file_set_id") == file_set_id
+                    and get_attribute(file_obj, "format_id") == format_id
+                    and get_attribute(file_obj, "name")
+                    == get_attribute(file_info, "file_name")
                 ):
-                    file_id = file_obj.id
+                    file_id = get_attribute(file_obj, "id")
                     logger.info("Found existing file with ID: %s", file_id)
                     file_existed_before = True
                     break
@@ -746,16 +758,16 @@ class IconikStorageGatewayRecipe:
         if not file_id:
             try:
                 file_model = FileCreate(
-                    name=file_info["file_name"],
-                    original_name=file_info["file_name"],
-                    directory_path=file_info["directory_path"],
+                    name=get_attribute(file_info, "file_name"),
+                    original_name=get_attribute(file_info, "file_name"),
+                    directory_path=get_attribute(file_info, "directory_path"),
                     file_set_id=file_set_id,
                     format_id=format_id,
                     storage_id=self.storage_id,
-                    size=file_info["size"],
+                    size=get_attribute(file_info, "size"),
                     type=FileType.FILE,
                     status=FileStatus.OPEN,
-                    checksum=file_info["file_checksum"]
+                    checksum=get_attribute(file_info, "file_checksum")
                 )
 
                 file_response = self.client.files().create_asset_file(
@@ -792,12 +804,12 @@ class IconikStorageGatewayRecipe:
     ) -> bool:
         """
         Apply metadata to the asset.
-        
+
         Args:
             asset_id: Asset ID
             metadata: Metadata to apply
             view_id: Optional view ID (uses default if None)
-            
+
         Returns:
             True if metadata was applied successfully, False otherwise
         """
@@ -822,7 +834,10 @@ class IconikStorageGatewayRecipe:
             metadata_values = MetadataValues(
                 root=metadata.get('metadata_values')
             )
-            logger.debug("metadata_values: %s", metadata_values)
+            logger.debug(
+                "metadata_values: %s",
+                json.dumps(metadata_values.model_dump(), indent=4)
+            )
 
             metadata_update = UpdateMetadata(metadata_values=metadata_values)
             metadata_response = self.client.metadata().update_asset_metadata(
@@ -850,11 +865,11 @@ class IconikStorageGatewayRecipe:
             List[str]:
         """
         Add asset to collections.
-        
+
         Args:
             asset_id: Asset ID
             collection_ids: List of collection IDs
-            
+
         Returns:
             List of collection IDs that were successfully added
         """
@@ -894,12 +909,12 @@ class IconikStorageGatewayRecipe:
     ) -> Dict[str, Any]:
         """
         Trigger transcoding processes for the asset.
-        
+
         Args:
             asset_id: Asset ID
             file_id: File ID
             file_info: File information dictionary
-            
+
         Returns:
             Dictionary with results of transcoding operations
         """
@@ -910,16 +925,16 @@ class IconikStorageGatewayRecipe:
         skip_transcoding = False
 
         for pattern in transcode_ignore:
-            if pattern.startswith('*') and file_info["file_name"].endswith(
-                pattern[1:]
-            ):
+            if pattern.startswith('*') and get_attribute(
+                file_info, "file_name"
+            ).endswith(pattern[1:]):
                 skip_transcoding = True
                 break
 
         if skip_transcoding:
             logger.info(
                 "Skipping transcoding for %s (matches transcode_ignore pattern)",
-                file_info["file_name"]
+                get_attribute(file_info, "file_name")
             )
             result["transcoding_skipped"] = True
             return result
@@ -1024,14 +1039,14 @@ class IconikStorageGatewayRecipe:
     ) -> Dict[str, Any]:
         """
         Create a history record for the asset operation.
-        
+
         Args:
             asset_id: Asset ID
             asset_existed: Whether the asset existed before
             format_existed: Whether the format existed before
             file_set_existed: Whether the file set existed before
             file_existed: Whether the file existed before
-            
+
         Returns:
             Dictionary with history record results
         """
@@ -1394,6 +1409,13 @@ def main():
     # Parse command line arguments
     args = _parse_arguments()
 
+    if args.debug:
+        logging.basicConfig(
+            format=
+            '%(asctime)s - %(filename)s:%(lineno)s - %(name)s - %(funcName)s - %(levelname)s - %(message)s'
+        )
+        logger.setLevel(logging.DEBUG)
+
     # Initialize client
     client = PythonikClient(
         app_id=args.app_id,
@@ -1427,17 +1449,17 @@ def main():
         )
 
         print("\nAsset creation complete!")
-        print(f"Asset ID: {result['asset_id']}")
-        print(f"Format ID: {result['format_id']}")
-        print(f"File Set ID: {result['file_set_id']}")
-        print(f"File ID: {result['file_id']}")
+        print(f"Asset ID: {get_attribute(result, 'asset_id')}")
+        print(f"Format ID: {get_attribute(result, 'format_id')}")
+        print(f"File Set ID: {get_attribute(result, 'file_set_id')}")
+        print(f"File ID: {get_attribute(result, 'file_id')}")
 
         if result.get("metadata_applied") is True:
             print("Metadata successfully applied")
 
         if result.get("added_collections"):
             print(
-                f"Added to collections: {', '.join(result['added_collections'])}"
+                f"Added to collections: {', '.join(get_attribute(result, 'added_collections'))}"
             )
 
         if result.get("mediainfo_job") == "skipped":
