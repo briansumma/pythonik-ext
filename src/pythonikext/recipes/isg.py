@@ -1,4 +1,5 @@
 import argparse
+import fnmatch
 import json
 import logging
 import mimetypes
@@ -22,6 +23,7 @@ from .._logging import get_logger
 from ..client import ExtendedPythonikClient as PythonikClient
 from ..exceptions import GeneralException
 from ..specs.assets import ExtendedAssetSpec as AssetSpec
+from ..specs.assets import ExtendedSpecBase
 from ..utils import calculate_md5
 
 
@@ -38,7 +40,8 @@ class IconikStorageGatewayRecipe:
         self,
         client: PythonikClient,
         storage_id: str,
-        default_view_id: Optional[str] = None
+        default_view_id: Optional[str] = None,
+        mount_mapping: Optional[str] = None
     ):
         """
         Initialize the recipe with client and storage info.
@@ -47,6 +50,8 @@ class IconikStorageGatewayRecipe:
             client: Configured PythonikClient instance
             storage_id: ID of the storage to use
             default_view_id: Optional default metadata view ID
+            mount_mapping: Optional mount point mapping in format
+                "local_path:remote_path"
         """
         self.client = client
         self.storage_id = storage_id
@@ -54,6 +59,25 @@ class IconikStorageGatewayRecipe:
 
         self._storage_settings = None
         self._storage_mount_point = None
+
+        # Parse mount mapping
+        self.local_path = None
+        self.remote_path = None
+
+        if mount_mapping:
+            parts = mount_mapping.split(':')
+            if len(parts) == 2:
+                self.local_path = parts[0]
+                self.remote_path = parts[1]
+                logger.info(
+                    "Mount mapping configured: %s -> %s", self.local_path,
+                    self.remote_path
+                )
+            else:
+                logger.warning(
+                    "Invalid mount mapping format: %s. Expected format: "
+                    "local_path:remote_path", mount_mapping
+                )
 
     @property
     def storage_settings(self) -> Dict[str, Any]:
@@ -87,35 +111,41 @@ class IconikStorageGatewayRecipe:
             )
         return self._storage_mount_point
 
-    def get_relative_path(self, file_path: str) -> str:
+    def map_file_path(self, file_path: str) -> str:
         """
-        Get path relative to storage mount point.
+        Map local file path to remote path if mount mapping is configured.
 
         Args:
-            file_path: Absolute file path
+            file_path: Local file path
 
         Returns:
-            Path relative to storage mount point
+            Mapped file path for storage
         """
         abs_path = os.path.abspath(file_path)
 
-        if abs_path.startswith(self.mount_point):
-            return abs_path[len(self.mount_point):].lstrip('/')
+        # Apply mount mapping if configured
+        if self.local_path and self.remote_path and abs_path.startswith(
+            self.local_path
+        ):
+            mapped_path = abs_path.replace(self.local_path, self.remote_path, 1)
+            logger.debug("Mapped file path: %s -> %s", abs_path, mapped_path)
+            return mapped_path
 
         return abs_path
 
-    def check_for_duplicate_files(self, file_path: str) -> List[Dict]:
+    def check_for_duplicate_files(self, checksum_or_file: str) -> List[Dict]:
         """
         Check for duplicate files by checksum.
 
         Args:
-            file_path: Path to the file
+            checksum_or_file: Either an MD5 checksum string or a path to a file
 
         Returns:
             List of file objects with the same checksum
         """
         try:
-            response = self.client.files().get_files_by_checksum(file_path)
+            response = self.client.files(
+            ).get_files_by_checksum(checksum_or_file)
 
             if response.response.ok and response.data.objects:
                 return response.data.objects
@@ -242,6 +272,49 @@ class IconikStorageGatewayRecipe:
 
         return metadata_values
 
+    # Complete set of fixes for the has_been_deleted and related methods
+
+    def has_been_deleted(self, object_id: str, object_type: str) -> bool:
+        """
+        Check if an object has been deleted but not yet purged.
+
+        Args:
+            object_id: Object ID
+            object_type: Object Type, i.e., assets, collections, formats, or
+                file_sets
+
+        Returns:
+            True if the object has been deleted (in trash), False otherwise
+        """
+        supported_object_types = [
+            "assets", "collections", "formats", "file_sets"
+        ]
+        if object_type not in supported_object_types:
+            raise ValueError(
+                f"object_type must be one of: {supported_object_types}"
+            )
+
+        object_response = None
+        if object_type == "assets":
+            object_response = self.client.assets().get(object_id)
+        elif object_type == "collections":
+            object_response = self.client.collections().get(object_id)
+        else:
+            params = {"id": object_id}
+            delete_queue_url = self.client.files(
+            ).gen_url(f"delete_queue/{object_type}/")
+            response = self.client.session.get(delete_queue_url, params=params)
+            object_response = ExtendedSpecBase.parse_response(response)
+
+        if object_response and object_response.response.ok:
+            object_ = get_attribute(object_response, "data")
+            is_deleted = get_attribute(object_, "status") in ["DELETED"]
+            if is_deleted:
+                logger.debug("Asset %s has been deleted", object_id)
+            return is_deleted
+
+        return False
+
     def has_mediainfo(self, asset_id: str, file_id: str) -> bool:
         """
         Check if mediainfo extraction has already been run.
@@ -253,12 +326,30 @@ class IconikStorageGatewayRecipe:
         Returns:
             True if mediainfo exists, False otherwise
         """
-        try:
-            mediainfo_url = self.client.files(
-            ).gen_url(f"assets/{asset_id}/files/{file_id}/mediainfo")
-            response = self.client.session.get(mediainfo_url)
+        # First check if the asset has been deleted
+        if self.has_been_deleted(asset_id, "assets"):
+            return False
 
-            return response.ok and response.json().get('objects')
+        try:
+            file_response = self.client.files().get_asset_file(
+                asset_id, file_id
+            )
+            if file_response.response.ok:
+                format_id = file_response.data.format_id
+
+                component_url = self.client.files(
+                ).gen_url(f"assets/{asset_id}/formats/{format_id}/components/")
+                logger.debug("component_url: %s", component_url)
+
+                response = self.client.session.get(component_url)
+
+                return response.ok and len(
+                    response.json().get('objects', [])
+                ) > 0
+
+            # If we can't determine status, assume it doesn't exist
+            logger.debug("No mediainfo found for file %s", file_id)
+            return False
         except Exception as e:
             logger.error("Error checking mediainfo status: %s", str(e))
             return False
@@ -273,10 +364,16 @@ class IconikStorageGatewayRecipe:
         Returns:
             True if proxies exist, False otherwise
         """
+        # First check if the asset has been deleted
+        if self.has_been_deleted(asset_id, "assets"):
+            return False
+
         try:
             proxy_response = self.client.files().get_asset_proxies(asset_id)
 
-            return proxy_response.response.ok and proxy_response.data.objects
+            return proxy_response.response.ok and len(
+                proxy_response.data.objects
+            ) > 0
         except Exception as e:
             logger.error("Error checking proxy status: %s", str(e))
             return False
@@ -291,11 +388,17 @@ class IconikStorageGatewayRecipe:
         Returns:
             True if keyframes exist, False otherwise
         """
+        # First check if the asset has been deleted
+        if self.has_been_deleted(asset_id, "assets"):
+            return False
+
         try:
             keyframes_response = self.client.files(
             ).get_asset_keyframes(asset_id)
 
-            return keyframes_response.response.ok and keyframes_response.data.objects
+            return keyframes_response.response.ok and len(
+                keyframes_response.data.objects
+            ) > 0
         except Exception as e:
             logger.error("Error checking keyframes status: %s", str(e))
             return False
@@ -310,6 +413,10 @@ class IconikStorageGatewayRecipe:
         Returns:
             True if transcoding history exists, False otherwise
         """
+        # First check if the asset has been deleted
+        if self.has_been_deleted(asset_id, "assets"):
+            return False
+
         try:
             history_url = self.client.assets(
             ).gen_url(f"assets/{asset_id}/history/")
@@ -318,6 +425,7 @@ class IconikStorageGatewayRecipe:
             if response.ok:
                 history_entries = response.json().get('objects', [])
                 for entry in history_entries:
+                    # logger.debug("history entry: %s", entry)
                     if entry.get('operation_type') == 'TRANSCODE':
                         return True
             return False
@@ -325,28 +433,77 @@ class IconikStorageGatewayRecipe:
             logger.error("Error checking history: %s", str(e))
             return False
 
-    def has_metadata(self, asset_id: str, view_id: str) -> bool:
+    def has_mediainfo_metadata_history(self, asset_id: str) -> bool:
+        """
+        Check if there's already a metadata history entry whose user ID matches
+        the system ID.
+
+        Args:
+            asset_id: Asset ID
+
+        Returns:
+            True if transcoding history exists, False otherwise
+        """
+        # First check if the asset has been deleted
+        if self.has_been_deleted(asset_id, "assets"):
+            return False
+
+        try:
+            history_url = self.client.assets(
+            ).gen_url(f"assets/{asset_id}/history/")
+            response = self.client.session.get(history_url)
+
+            if response.ok:
+                history_entries = response.json().get('objects', [])
+                for entry in history_entries:
+                    if entry.get('operation_type') == 'METADATA' and entry.get(
+                        'system_domain_id'
+                    ) == entry.get('user_id'):
+                        return True
+            return False
+        except Exception as e:
+            logger.error("Error checking history: %s", str(e))
+            return False
+
+    def has_metadata(
+        self, asset_id: str, view_id: Optional[str] = None
+    ) -> bool:
         """
         Check if metadata already exists for this asset and view.
 
         Args:
             asset_id: Asset ID
-            view_id: Metadata view ID
+            view_id: Optional metadata view ID (if None, checks directly)
 
         Returns:
             True if metadata exists, False otherwise
         """
+        # First check if the asset has been deleted
+        if self.has_been_deleted(asset_id, "assets"):
+            return False
+
         try:
-            metadata_url = self.client.metadata(
-            ).gen_url(f"assets/{asset_id}/views/{view_id}")
+            metadata_url = self.client.metadata().gen_url(
+                f"assets/{asset_id}/views/{view_id}"
+            ) if view_id else self.client.metadata(
+            ).gen_url(f"assets/{asset_id}/")
             response = self.client.session.get(metadata_url)
 
             if response.ok:
                 metadata = response.json()
-                metadata_values = metadata.get('metadata_values', {})
+                # logger.debug("metadata: %s", json.dumps(metadata, indent=4))
+                metadata_values = metadata.get(
+                    'metadata_values', {}
+                ) if view_id else metadata
+                logger.debug(
+                    "metadata_values: %s",
+                    json.dumps(metadata_values, indent=4)
+                )
 
                 for field_values in metadata_values.values():
-                    values = field_values.get('field_values', [])
+                    values = field_values.get(
+                        'field_values', []
+                    ) if view_id else field_values.get('values', [])
                     if values and len(values) > 0:
                         return True
 
@@ -369,55 +526,79 @@ class IconikStorageGatewayRecipe:
             FileNotFoundError: If the file does not exist
             ValueError: If the file matches a scan_ignore pattern
         """
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+        file_checksum = None
+        file_size = 0
+        if os.path.exists(file_path):
+            file_checksum = calculate_md5(file_path)
+            file_size = os.path.getsize(file_path)
 
-        logger.debug(
-            "storage_settings: %s", json.dumps(self.storage_settings, indent=4)
-        )
-
-        file_checksum = calculate_md5(file_path)
         file_name = os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)
         file_stem, _ = os.path.splitext(file_name)
-        mount_point = self.mount_point
-        logger.debug("mount_point: %s", mount_point)
         title_includes_extension = self.storage_settings.get(
             'title_includes_extension', True
         )
         title = file_name if title_includes_extension else file_stem
         logger.debug("title: %s", title)
 
-        directory_path = os.path.dirname(file_path)
-        if directory_path.startswith(mount_point):
-            directory_path = directory_path[len(mount_point):].lstrip('/')
+        path_mapping = self.map_file_path(file_path)
+
+        directory_path = os.path.dirname(path_mapping)
+        if directory_path.startswith(self.mount_point):
+            directory_path = directory_path[len(self.mount_point):].lstrip('/')
         logger.debug("directory_path: %s", directory_path)
 
         mime_type, _ = mimetypes.guess_type(file_name)
 
-        # Check scan_ignore patterns
+        # Check scan_include and scan_ignore patterns
+        # Prioritize include over exclude
+        scan_include = self.storage_settings.get('scan_include', [])
         scan_ignore = self.storage_settings.get('scan_ignore', [])
+
+        # If include patterns exist, file must match at least one
+        if scan_include:
+            include_match = False
+            for pattern in scan_include:
+                if pattern.startswith('re:/') and pattern.endswith('/'):
+                    regex = pattern.lstrip('re:/').rstrip('/')
+                    if re.search(regex, file_name) or re.search(
+                        normalize_pattern(regex), file_name
+                    ):
+                        include_match = True
+                        break
+                else:
+                    if fnmatch.fnmatch(file_name, pattern):
+                        include_match = True
+                        break
+
+            if not include_match:
+                raise ValueError(
+                    f"File does not match any scan_include pattern: {scan_include}"
+                )
+
+        # Check if file matches any ignore pattern
         for pattern in scan_ignore:
-            logger.debug("pattern in scan_ignore: %s", pattern)
-            pattern = normalize_pattern(pattern)
-            logger.debug("normalized pattern in scan_ignore: %s", pattern)
-            if pattern.startswith('re:'):
-                regex = pattern[4:].rstrip('/')
-                if re.search(regex, file_name):
+            if pattern.startswith('re:/') and pattern.endswith('/'):
+                regex = pattern.lstrip('re:/').rstrip('/')
+                if re.search(regex, file_name) or re.search(
+                    normalize_pattern(regex), file_name
+                ):
                     raise ValueError(
                         f"File matches scan_ignore pattern: {pattern}"
                     )
-            elif pattern.startswith('*'):
-                if file_name.endswith(pattern[1:]):
+            else:
+                if fnmatch.fnmatch(file_name, pattern):
                     raise ValueError(
                         f"File matches scan_ignore pattern: {pattern}"
                     )
 
         # Check for sidecar metadata
-        sidecar_metadata = self.check_for_sidecar_metadata(file_path)
-        if self.storage_settings.get(
+        sidecar_metadata_required = self.storage_settings.get(
             'sidecar_metadata_required', False
-        ) and sidecar_metadata is None:
+        )
+        sidecar_metadata = self.check_for_sidecar_metadata(
+            file_path
+        ) if sidecar_metadata_required else None
+        if sidecar_metadata_required and sidecar_metadata is None:
             raise ValueError("Sidecar metadata required but not found")
 
         return {
@@ -430,7 +611,8 @@ class IconikStorageGatewayRecipe:
             "mime_type": mime_type,
             "directory_path": directory_path,
             "file_checksum": file_checksum,
-            "sidecar_metadata": sidecar_metadata
+            "sidecar_metadata": sidecar_metadata,
+            "path_mapping": path_mapping
         }
 
     def _resolve_external_id(self, file_info: Dict[str, Any]) -> str:
@@ -446,9 +628,12 @@ class IconikStorageGatewayRecipe:
         if self.storage_settings.get('filename_is_external_id', False):
             external_id = get_attribute(file_info, "file_name")
         else:
-            directory_path = get_attribute(file_info, "directory_path")
-            file_checksum = get_attribute(file_info, "file_checksum")
-            external_id = f"{directory_path}/{file_checksum}"
+            file_path = get_attribute(file_info, "file_path")
+            # directory_path = get_attribute(file_info, "directory_path")
+            # file_checksum = get_attribute(file_info, "file_checksum")
+            # file_path = get_attribute(file_info, "file_path")
+            # external_id = f"{directory_path}/{file_checksum}" if file_checksum else file_path
+            external_id = file_path
 
         logger.debug("external_id: %s", external_id)
         return external_id
@@ -500,10 +685,9 @@ class IconikStorageGatewayRecipe:
         )
 
         # Check for duplicate files by checksum
-        if aggregate_identical:
-            duplicate_files = self.check_for_duplicate_files(
-                get_attribute(file_info, "file_path")
-            )
+        file_checksum = get_attribute(file_info, "file_checksum")
+        if aggregate_identical and file_checksum:
+            duplicate_files = self.check_for_duplicate_files(file_checksum)
 
             if duplicate_files:
                 for file_obj in duplicate_files:
@@ -513,6 +697,10 @@ class IconikStorageGatewayRecipe:
                         continue
 
                     asset_id = get_attribute(file_obj, "asset_id")
+                    if self.has_been_deleted(asset_id, "assets"):
+                        logger.debug("Asset %s has been deleted", asset_id)
+                        continue
+
                     logger.info("Found existing asset with ID: %s", asset_id)
                     return asset_id, True
 
@@ -530,6 +718,12 @@ class IconikStorageGatewayRecipe:
             if asset_response.response.ok and asset_response.data.objects:
                 asset = asset_response.data.objects[0]
                 asset_id = get_attribute(asset, "id")
+                if self.has_been_deleted(asset_id, "assets"):
+                    logger.debug(
+                        "Asset with external ID %s has been deleted",
+                        external_id
+                    )
+                    return None, False
                 logger.info(
                     "Found existing asset with external ID %s: %s", external_id,
                     asset_id
@@ -603,15 +797,20 @@ class IconikStorageGatewayRecipe:
         format_id = None
         format_existed_before = False
 
-        format_response = self.client.files().get_asset_formats(asset_id)
+        format_response = None
+        if not self.has_been_deleted(asset_id, "assets"):
+            format_response = self.client.files().get_asset_formats(asset_id)
 
-        if format_response.response.ok and format_response.data.objects:
+        if format_response and format_response.response.ok and format_response.data.objects:
             for format_obj in format_response.data.objects:
                 if get_attribute(format_obj,
                                  "name") == "ORIGINAL" and get_attribute(
                                      format_obj, "status"
                                  ) == "ACTIVE":
                     format_id = get_attribute(format_obj, "id")
+                    if self.has_been_deleted(format_id, "formats"):
+                        logger.debug("Format %s has been deleted", format_id)
+                        break
                     logger.info("Found existing format with ID: %s", format_id)
                     format_existed_before = True
                     break
@@ -658,9 +857,12 @@ class IconikStorageGatewayRecipe:
         file_set_id = None
         file_set_existed_before = False
 
-        file_sets_response = self.client.files().get_asset_filesets(asset_id)
+        file_sets_response = None
+        if not self.has_been_deleted(asset_id, "assets"):
+            file_sets_response = self.client.files(
+            ).get_asset_filesets(asset_id)
 
-        if file_sets_response.response.ok and file_sets_response.data.objects:
+        if file_sets_response and file_sets_response.response.ok and file_sets_response.data.objects:
             for file_set in file_sets_response.data.objects:
                 if (
                     get_attribute(file_set, "base_dir")
@@ -670,6 +872,9 @@ class IconikStorageGatewayRecipe:
                     and get_attribute(file_set, "status") == "ACTIVE"
                 ):
                     file_set_id = get_attribute(file_set, "id")
+                    if self.has_been_deleted(file_set_id, "file_sets"):
+                        logger.debug("File set %s has been deleted", format_id)
+                        break
                     logger.info(
                         "Found existing file set with ID: %s", file_set_id
                     )
@@ -740,9 +945,11 @@ class IconikStorageGatewayRecipe:
         file_existed_before = False
 
         # Check for existing file
-        files_response = self.client.files().get_asset_files(asset_id)
+        files_response = None
+        if not self.has_been_deleted(asset_id, "assets"):
+            files_response = self.client.files().get_asset_files(asset_id)
 
-        if files_response.response.ok and files_response.data.objects:
+        if files_response and files_response.response.ok and files_response.data.objects:
             for file_obj in files_response.data.objects:
                 if (
                     get_attribute(file_obj, "file_set_id") == file_set_id
@@ -751,6 +958,9 @@ class IconikStorageGatewayRecipe:
                     == get_attribute(file_info, "file_name")
                 ):
                     file_id = get_attribute(file_obj, "id")
+                    if self.has_been_deleted(file_set_id, "file_sets"):
+                        logger.debug("File %s has been deleted", file_id)
+                        break
                     logger.info("Found existing file with ID: %s", file_id)
                     file_existed_before = True
                     break
@@ -808,7 +1018,7 @@ class IconikStorageGatewayRecipe:
         Args:
             asset_id: Asset ID
             metadata: Metadata to apply
-            view_id: Optional view ID (uses default if None)
+            view_id: Optional view ID (if None, use direct method)
 
         Returns:
             True if metadata was applied successfully, False otherwise
@@ -818,10 +1028,13 @@ class IconikStorageGatewayRecipe:
         )
         logger.debug("metadata_view_id: %s", metadata_view_id)
 
-        if not metadata_view_id:
-            logger.warning("No metadata view ID provided or configured")
-            return False
-
+        # This is the same whether we have a view ID or not
+        metadata_values = MetadataValues(root=metadata.get('metadata_values'))
+        # logger.debug(
+        #     "metadata_values: %s",
+        #     json.dumps(metadata_values.model_dump(), indent=4)
+        # )
+        metadata_update = UpdateMetadata(metadata_values=metadata_values)
         metadata_exists = self.has_metadata(asset_id, metadata_view_id)
 
         if metadata_exists:
@@ -830,16 +1043,29 @@ class IconikStorageGatewayRecipe:
                 asset_id, metadata_view_id
             )
             return False
-        try:
-            metadata_values = MetadataValues(
-                root=metadata.get('metadata_values')
-            )
-            logger.debug(
-                "metadata_values: %s",
-                json.dumps(metadata_values.model_dump(), indent=4)
-            )
 
-            metadata_update = UpdateMetadata(metadata_values=metadata_values)
+        if not metadata_view_id:
+            try:
+                metadata_response = self.client.metadata().put_metadata_direct(
+                    object_type="assets",
+                    object_id=asset_id,
+                    metadata=metadata_update
+                )
+
+                if not metadata_response.response.ok:
+                    logger.warning(
+                        "Failed to update metadata: %s",
+                        metadata_response.response.text
+                    )
+                    return False
+                logger.info("Applied metadata to asset successfully")
+                return True
+
+            except Exception as e:
+                logger.error("Error applying metadata: %s", str(e))
+                return False
+
+        try:
             metadata_response = self.client.metadata().update_asset_metadata(
                 asset_id=asset_id,
                 view_id=metadata_view_id,
@@ -918,18 +1144,78 @@ class IconikStorageGatewayRecipe:
         Returns:
             Dictionary with results of transcoding operations
         """
-        result = {}
+        result: Dict[str, Any] = {}
 
-        # Check if file should be skipped for transcoding
+        # Check transcode_include and transcode_ignore patterns
+        # Prioritize include over exclude
         transcode_ignore = self.storage_settings.get('transcode_ignore', [])
+        transcode_include = self.storage_settings.get('transcode_include', [])
         skip_transcoding = False
+        must_include = False
 
-        for pattern in transcode_ignore:
-            if pattern.startswith('*') and get_attribute(
-                file_info, "file_name"
-            ).endswith(pattern[1:]):
-                skip_transcoding = True
-                break
+        file_name = get_attribute(file_info, "file_name")
+
+        # If include patterns exist, check if file matches any
+        if transcode_include:
+            must_include = True
+            for pattern in transcode_include:
+                if pattern.startswith('re:/') and pattern.endswith('/'):
+                    regex = pattern.lstrip('re:/').rstrip('/')
+                    if re.search(regex, file_name):
+                        logger.info(
+                            "File matches transcode_include pattern: %s",
+                            pattern
+                        )
+                        must_include = False
+                        break
+                    if re.search(normalize_pattern(regex), file_name):
+                        logger.info(
+                            "File matches transcode_include pattern: %s",
+                            pattern
+                        )
+                        must_include = False
+                        break
+                else:
+                    if fnmatch.fnmatch(file_name, pattern):
+                        logger.info(
+                            "File matches transcode_include pattern: %s",
+                            pattern
+                        )
+                        must_include = False
+                        break
+
+        # If we must include this file (didn't match any include pattern)
+        # then skip transcoding
+        if must_include:
+            logger.info(
+                "File does not match any transcode_include pattern, skipping: %s",
+                file_name
+            )
+            skip_transcoding = True
+        else:
+            # Otherwise check ignore patterns
+            for pattern in transcode_ignore:
+                if pattern.startswith('re:/') and pattern.endswith('/'):
+                    regex = pattern.lstrip('re:/').rstrip('/')
+                    if re.search(regex, file_name):
+                        logger.info(
+                            "File matches transcode_ignore pattern: %s", pattern
+                        )
+                        skip_transcoding = True
+                        break
+                    if re.search(normalize_pattern(regex), file_name):
+                        logger.info(
+                            "File matches transcode_ignore pattern: %s", pattern
+                        )
+                        skip_transcoding = True
+                        break
+                else:
+                    if fnmatch.fnmatch(file_name, pattern):
+                        logger.info(
+                            "File matches transcode_ignore pattern: %s", pattern
+                        )
+                        skip_transcoding = True
+                        break
 
         if skip_transcoding:
             logger.info(
@@ -949,11 +1235,18 @@ class IconikStorageGatewayRecipe:
         keyframes_exist = self.has_keyframes(asset_id)
         logger.debug("keyframes_exist: %s", keyframes_exist)
 
-        has_transcode_history = self.has_transcoding_history(asset_id)
-        logger.debug("has_transcode_history: %s", has_transcode_history)
+        has_mediainfo_metadata_history = self.has_mediainfo_metadata_history(
+            asset_id
+        )
+        logger.debug(
+            "has_mediainfo_metadata_history: %s", has_mediainfo_metadata_history
+        )
+
+        # has_transcode_history = self.has_transcoding_history(asset_id)
+        # logger.debug("has_transcode_history: %s", has_transcode_history)
 
         # Trigger mediainfo extraction if needed
-        if not mediainfo_exists and not has_transcode_history:
+        if not mediainfo_exists or not has_mediainfo_metadata_history:
             try:
                 mediainfo_url = self.client.files(
                 ).gen_url(f"assets/{asset_id}/files/{file_id}/mediainfo")
@@ -989,8 +1282,12 @@ class IconikStorageGatewayRecipe:
             )
             result["mediainfo_job"] = "skipped"
 
+        # Force `local_proxy_creation` to be False so the actual ISG will do the heavy lifting
+        self.storage_settings['local_proxy_creation'] = False
+
         # Trigger proxy/keyframe generation if needed
-        if not proxies_exist and not keyframes_exist and not has_transcode_history:
+        if not result.get("mediainfo_job", False
+                          ) and (not proxies_exist or not keyframes_exist):
             if self.storage_settings.get('local_proxy_creation', False):
                 logger.info("Local proxy creation enabled but not implemented")
             else:
@@ -1155,13 +1452,11 @@ class IconikStorageGatewayRecipe:
 
         return False
 
-    # pylint: disable=too-many-positional-arguments
     def create_asset(
         self,
         file_path: str,
         external_id: Optional[str] = None,
         metadata: Optional[Dict] = None,
-        view_id: Optional[str] = None,
         collection_ids: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
@@ -1171,7 +1466,6 @@ class IconikStorageGatewayRecipe:
             file_path: Path to the file
             external_id: Optional external ID (generated from path if None)
             metadata: Optional metadata to apply
-            view_id: Optional metadata view ID (overrides default)
             collection_ids: Optional list of collection IDs to add the asset to
 
         Returns:
@@ -1205,7 +1499,7 @@ class IconikStorageGatewayRecipe:
         }
 
         # Get metadata view ID
-        metadata_view_id = view_id or self.default_view_id or self.storage_settings.get(
+        metadata_view_id = self.default_view_id or self.storage_settings.get(
             'metadata_view_id'
         )
         result["metadata_view_id"] = metadata_view_id
@@ -1236,7 +1530,7 @@ class IconikStorageGatewayRecipe:
         result["file_id"] = file_id
 
         # Apply metadata if provided
-        if metadata and metadata_view_id:
+        if metadata:
             metadata_applied = self._apply_metadata(
                 asset_id, metadata, metadata_view_id
             )
@@ -1306,6 +1600,10 @@ def _parse_arguments() -> argparse.Namespace:
         '--storage-id',
         required=False,
         help='Storage ID (or set ICONIK_STORAGE_ID environment variable)'
+    )
+    storage_group.add_argument(
+        '--mount-mapping',
+        help='Mount mapping in format "local_path:remote_path"'
     )
 
     # Asset options
@@ -1435,7 +1733,10 @@ def main():
 
     # Initialize recipe
     recipe = IconikStorageGatewayRecipe(
-        client=client, storage_id=args.storage_id
+        client=client,
+        storage_id=args.storage_id,
+        default_view_id=args.view_id,
+        mount_mapping=args.mount_mapping
     )
 
     # Create asset
@@ -1444,7 +1745,6 @@ def main():
             file_path=args.file_path,
             external_id=args.external_id,
             metadata=metadata,
-            view_id=args.view_id,
             collection_ids=args.collection_ids
         )
 
