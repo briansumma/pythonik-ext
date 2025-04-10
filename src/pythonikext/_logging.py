@@ -11,21 +11,20 @@ from typing import Any, Dict, Optional, Union
 
 # Handle both old and new pythonjsonlogger import locations
 JSON_LOGGING_AVAILABLE = False
+JsonFormatter = None
 try:
     # Try new import location first
     from pythonjsonlogger.json import JsonFormatter
-
     JSON_LOGGING_AVAILABLE = True
 except ImportError:
     try:
         # Fall back to old import location
         from pythonjsonlogger.jsonlogger import JsonFormatter
-
         JSON_LOGGING_AVAILABLE = True
     except ImportError:
         # Package not available
-        JsonFormatter = None
         JSON_LOGGING_AVAILABLE = False
+        JsonFormatter = None
 
 # Constants
 VALID_LOG_FORMATS = ["text", "json"]
@@ -37,43 +36,45 @@ try:
 except ImportError:
     VERSION = "unknown"
 
+# Only define PythonikJsonFormatter if JsonFormatter is available
+if JSON_LOGGING_AVAILABLE:
 
-class PythonikJsonFormatter(JsonFormatter):
-    """Custom JSON formatter with additional fields."""
+    class PythonikJsonFormatter(JsonFormatter):
+        """Custom JSON formatter with additional fields."""
 
-    def __init__(
-        self,
-        app_name: str = "pythonik-ext",
-        extra_fields: Optional[Dict[str, Any]] = None
-    ):
-        """
-        Initialize the JSON formatter.
+        def __init__(
+            self,
+            app_name: str = "pythonik-ext",
+            extra_fields: Optional[Dict[str, Any]] = None
+        ):
+            """
+            Initialize the JSON formatter.
 
-        Args:
-            app_name: Name of the application
-            extra_fields: Additional fields to include in every log entry
-        """
-        super().__init__()
-        self.app_name = app_name
-        self.extra_fields = extra_fields or {}
+            Args:
+                app_name: Name of the application
+                extra_fields: Additional fields to include in every log entry
+            """
+            super().__init__()
+            self.app_name = app_name
+            self.extra_fields = extra_fields or {}
 
-    def add_fields(
-        self, log_record: Dict[str, Any], record: logging.LogRecord,
-        message_dict: Dict[str, Any]
-    ) -> None:
-        """Add custom fields to the log record."""
-        super().add_fields(log_record, record, message_dict)
+        def add_fields(
+            self, log_record: Dict[str, Any], record: logging.LogRecord,
+            message_dict: Dict[str, Any]
+        ) -> None:
+            """Add custom fields to the log record."""
+            super().add_fields(log_record, record, message_dict)
 
-        # Add standard fields
-        log_record.update({
-            "@timestamp": datetime.now(timezone.utc).isoformat(),
-            "app": self.app_name,
-            "version": VERSION,
-            "logger": record.name,
-        })
+            # Add standard fields
+            log_record.update({
+                "@timestamp": datetime.now(timezone.utc).isoformat(),
+                "app": self.app_name,
+                "version": VERSION,
+                "logger": record.name,
+            })
 
-        # Add any extra fields
-        log_record.update(self.extra_fields)
+            # Add any extra fields
+            log_record.update(self.extra_fields)
 
 
 class LogConfig:
