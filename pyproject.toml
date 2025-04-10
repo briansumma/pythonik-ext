@@ -14,8 +14,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
@@ -23,7 +21,7 @@ keywords = ["iconik", "api", "pythonik", "extensions"]
 dependencies = [
     "nsa-pythonik==1.9.4",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 dev = [
@@ -55,7 +53,7 @@ package-dir = { "" = "src" }
 # Basic configuration
 line-length = 80
 indent-width = 4
-target-version = "py39"
+target-version = "py311"
 
 # Exclude patterns
 exclude = [
@@ -191,6 +189,7 @@ ignore = [
     "N", # naming (we'll configure specific naming rules below)
     "E203", # whitespace before ':' (Black formats this differently)
     "E501", # line-too-long
+    "E731", # Do not assign a `lambda` expression, use a `def`
 ]
 
 # Per-file ignores
@@ -226,7 +225,7 @@ max-complexity = 12  # Based on max-branches in pylint config
 [tool.pylint.main]
 ignore = ["CVS", "third_party"]
 ignore-patterns = ["^\\.#"]
-py-version = "3.9"
+py-version = "3.11"
 jobs = 1
 limit-inference-results = 100
 suggestion-mode = true

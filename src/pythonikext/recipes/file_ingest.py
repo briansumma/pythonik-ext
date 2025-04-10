@@ -28,6 +28,7 @@ from ..exceptions import GeneralException
 from ..specs.assets import ExtendedAssetSpec as AssetSpec
 from ..specs.assets import ExtendedSpecBase
 from ..utils import calculate_md5
+from .collection_directory_mapping import CollectionDirectoryMappingRecipe
 
 
 logger = get_logger(__name__)
@@ -63,7 +64,6 @@ class FileIngestRecipe:
         self._storage_settings = None
         self._storage_mount_point = None
 
-        # Parse mount mapping
         self.local_path = None
         self.remote_path = None
 
@@ -126,7 +126,6 @@ class FileIngestRecipe:
         """
         abs_path = os.path.abspath(file_path)
 
-        # Apply mount mapping if configured
         if self.local_path and self.remote_path and abs_path.startswith(
             self.local_path
         ):
@@ -275,8 +274,6 @@ class FileIngestRecipe:
 
         return metadata_values
 
-    # Complete set of fixes for the has_been_deleted and related methods
-
     def has_been_deleted(self, object_id: str, object_type: str) -> bool:
         """
         Check if an object has been deleted but not yet purged.
@@ -329,7 +326,7 @@ class FileIngestRecipe:
         Returns:
             True if mediainfo exists, False otherwise
         """
-        # First check if the asset has been deleted
+
         if self.has_been_deleted(asset_id, "assets"):
             return False
 
@@ -350,7 +347,6 @@ class FileIngestRecipe:
                     response.json().get('objects', [])
                 ) > 0
 
-            # If we can't determine status, assume it doesn't exist
             logger.debug("No mediainfo found for file %s", file_id)
             return False
         except Exception as e:
@@ -367,7 +363,7 @@ class FileIngestRecipe:
         Returns:
             True if proxies exist, False otherwise
         """
-        # First check if the asset has been deleted
+
         if self.has_been_deleted(asset_id, "assets"):
             return False
 
@@ -391,7 +387,7 @@ class FileIngestRecipe:
         Returns:
             True if keyframes exist, False otherwise
         """
-        # First check if the asset has been deleted
+
         if self.has_been_deleted(asset_id, "assets"):
             return False
 
@@ -416,7 +412,7 @@ class FileIngestRecipe:
         Returns:
             True if transcoding history exists, False otherwise
         """
-        # First check if the asset has been deleted
+
         if self.has_been_deleted(asset_id, "assets"):
             return False
 
@@ -428,7 +424,6 @@ class FileIngestRecipe:
             if response.ok:
                 history_entries = response.json().get('objects', [])
                 for entry in history_entries:
-                    # logger.debug("history entry: %s", entry)
                     if entry.get('operation_type') == 'TRANSCODE':
                         return True
             return False
@@ -447,7 +442,7 @@ class FileIngestRecipe:
         Returns:
             True if transcoding history exists, False otherwise
         """
-        # First check if the asset has been deleted
+
         if self.has_been_deleted(asset_id, "assets"):
             return False
 
@@ -481,7 +476,7 @@ class FileIngestRecipe:
         Returns:
             True if metadata exists, False otherwise
         """
-        # First check if the asset has been deleted
+
         if self.has_been_deleted(asset_id, "assets"):
             return False
 
@@ -494,7 +489,6 @@ class FileIngestRecipe:
 
             if response.ok:
                 metadata = response.json()
-                # logger.debug("metadata: %s", json.dumps(metadata, indent=4))
                 metadata_values = metadata.get(
                     'metadata_values', {}
                 ) if view_id else metadata
@@ -515,94 +509,157 @@ class FileIngestRecipe:
             logger.error("Error checking metadata status: %s", str(e))
             return False
 
-    def _check_file_validity(self, file_path: str) -> Dict[str, Any]:
+    def _check_file_validity(
+        self,
+        file_path: str,
+        md5sum: Optional[str] = None,
+        allow_offline: bool = False
+    ) -> Dict[str, Any]:
         """
         Check file validity and gather basic information.
 
         Args:
             file_path: Path to the file
+            md5sum: Optional pre-calculated MD5 checksum to use
+            allow_offline: Whether to allow files that are not accessible
 
         Returns:
             Dictionary with file info
 
         Raises:
-            FileNotFoundError: If the file does not exist
+            FileNotFoundError: If the file does not exist and allow_offline is
+                False
             ValueError: If the file matches a scan_ignore pattern
         """
-        file_checksum = None
+        file_checksum = md5sum
         file_size = 0
-        if os.path.exists(file_path):
-            file_checksum = calculate_md5(file_path)
+        file_exists = os.path.exists(file_path)
+
+        if file_exists:
+            logger.debug("File exists: %s", file_path)
+            if not md5sum:
+                file_checksum = calculate_md5(file_path)
+                logger.debug("Calculated MD5 checksum: %s", file_checksum)
             file_size = os.path.getsize(file_path)
+            logger.debug("File size: %s bytes", file_size)
+        elif not allow_offline:
+            logger.error(
+                "File does not exist and allow_offline is False: %s", file_path
+            )
+            raise FileNotFoundError(f"File not found: {file_path}")
+        else:
+            logger.info(
+                "File does not exist but allow_offline is True: %s", file_path
+            )
+            if not md5sum:
+                logger.warning(
+                    "No MD5 checksum provided for offline file. Using empty string."
+                )
+                file_checksum = ""
 
         file_name = os.path.basename(file_path)
-        file_stem, _ = os.path.splitext(file_name)
+        file_stem, file_ext = os.path.splitext(file_name)
         title_includes_extension = self.storage_settings.get(
             'title_includes_extension', True
         )
         title = file_name if title_includes_extension else file_stem
-        logger.debug("title: %s", title)
+        logger.debug("Title: %s", title)
 
         path_mapping = self.map_file_path(file_path)
+        logger.debug("Path mapping: %s", path_mapping)
 
         directory_path = os.path.dirname(path_mapping)
         if directory_path.startswith(self.mount_point):
             directory_path = directory_path[len(self.mount_point):].lstrip('/')
-        logger.debug("directory_path: %s", directory_path)
+        logger.debug("Directory path: %s", directory_path)
 
         mime_type, _ = mimetypes.guess_type(file_name)
+        logger.debug("MIME type: %s", mime_type)
 
-        # Check scan_include and scan_ignore patterns
-        # Prioritize include over exclude
         scan_include = self.storage_settings.get('scan_include', [])
         scan_ignore = self.storage_settings.get('scan_ignore', [])
+        logger.debug("Scan include patterns: %s", scan_include)
+        logger.debug("Scan ignore patterns: %s", scan_ignore)
 
-        # If include patterns exist, file must match at least one
         if scan_include:
             include_match = False
             for pattern in scan_include:
                 if pattern.startswith('re:/') and pattern.endswith('/'):
                     regex = pattern.lstrip('re:/').rstrip('/')
-                    if re.search(regex, file_name) or re.search(
-                        normalize_pattern(regex), file_name
+                    logger.debug(
+                        "Checking scan_include regex pattern: %s", regex
+                    )
+                    if re.search(regex, file_path) or re.search(
+                        normalize_pattern(regex), file_path
                     ):
                         include_match = True
+                        logger.debug(
+                            "File matches scan_include regex pattern: %s",
+                            pattern
+                        )
                         break
                 else:
-                    if fnmatch.fnmatch(file_name, pattern):
+                    logger.debug(
+                        "Checking scan_include wildcard pattern: %s", pattern
+                    )
+                    if fnmatch.fnmatch(file_path, pattern):
                         include_match = True
+                        logger.debug(
+                            "File matches scan_include wildcard pattern: %s",
+                            pattern
+                        )
                         break
 
             if not include_match:
+                logger.warning(
+                    "File does not match any scan_include pattern: %s",
+                    scan_include
+                )
                 raise ValueError(
                     f"File does not match any scan_include pattern: {scan_include}"
                 )
 
-        # Check if file matches any ignore pattern
         for pattern in scan_ignore:
             if pattern.startswith('re:/') and pattern.endswith('/'):
                 regex = pattern.lstrip('re:/').rstrip('/')
-                if re.search(regex, file_name) or re.search(
-                    normalize_pattern(regex), file_name
+                logger.debug("Checking scan_ignore regex pattern: %s", regex)
+                if re.search(regex, file_path) or re.search(
+                    normalize_pattern(regex), file_path
                 ):
+                    logger.warning(
+                        "File matches scan_ignore regex pattern: %s", pattern
+                    )
                     raise ValueError(
                         f"File matches scan_ignore pattern: {pattern}"
                     )
             else:
-                if fnmatch.fnmatch(file_name, pattern):
+                logger.debug(
+                    "Checking scan_ignore wildcard pattern: %s", pattern
+                )
+                if fnmatch.fnmatch(file_path, pattern):
+                    logger.warning(
+                        "File matches scan_ignore wildcard pattern: %s", pattern
+                    )
                     raise ValueError(
                         f"File matches scan_ignore pattern: {pattern}"
                     )
 
-        # Check for sidecar metadata
         sidecar_metadata_required = self.storage_settings.get(
             'sidecar_metadata_required', False
         )
-        sidecar_metadata = self.check_for_sidecar_metadata(
-            file_path
-        ) if sidecar_metadata_required else None
-        if sidecar_metadata_required and sidecar_metadata is None:
-            raise ValueError("Sidecar metadata required but not found")
+        logger.debug("Sidecar metadata required: %s", sidecar_metadata_required)
+
+        # Only check for sidecar if the file exists, or we're not allowing
+        # offline files
+        sidecar_metadata = None
+        if file_exists or not allow_offline:
+            sidecar_metadata = self.check_for_sidecar_metadata(
+                file_path
+            ) if sidecar_metadata_required else None
+
+            if sidecar_metadata_required and sidecar_metadata is None:
+                logger.warning("Sidecar metadata required but not found")
+                raise ValueError("Sidecar metadata required but not found")
 
         return {
             "storage_id": self.storage_id,
@@ -611,11 +668,13 @@ class FileIngestRecipe:
             "size": file_size,
             "file_name": file_name,
             "file_stem": file_stem,
+            "file_extension": file_ext,
             "mime_type": mime_type,
             "directory_path": directory_path,
             "file_checksum": file_checksum,
             "sidecar_metadata": sidecar_metadata,
-            "path_mapping": path_mapping
+            "path_mapping": path_mapping,
+            "file_exists": file_exists
         }
 
     def _resolve_external_id(self, file_info: Dict[str, Any]) -> str:
@@ -632,10 +691,6 @@ class FileIngestRecipe:
             external_id = get_attribute(file_info, "file_name")
         else:
             file_path = get_attribute(file_info, "file_path")
-            # directory_path = get_attribute(file_info, "directory_path")
-            # file_checksum = get_attribute(file_info, "file_checksum")
-            # file_path = get_attribute(file_info, "file_path")
-            # external_id = f"{directory_path}/{file_checksum}" if file_checksum else file_path
             external_id = file_path
 
         logger.debug("external_id: %s", external_id)
@@ -687,7 +742,6 @@ class FileIngestRecipe:
             'aggregate_only_on_same_storage', False
         )
 
-        # Check for duplicate files by checksum
         file_checksum = get_attribute(file_info, "file_checksum")
         if aggregate_identical and file_checksum:
             duplicate_files = self.check_for_duplicate_files(file_checksum)
@@ -707,7 +761,6 @@ class FileIngestRecipe:
                     logger.info("Found existing asset with ID: %s", asset_id)
                     return asset_id, True
 
-        # Look up by external ID
         try:
             assets_url = self.client.assets().gen_url("assets")
             logger.debug("assets_url: %s", assets_url)
@@ -947,7 +1000,6 @@ class FileIngestRecipe:
         file_id = None
         file_existed_before = False
 
-        # Check for existing file
         files_response = None
         if not self.has_been_deleted(asset_id, "assets"):
             files_response = self.client.files().get_asset_files(asset_id)
@@ -1031,12 +1083,7 @@ class FileIngestRecipe:
         )
         logger.debug("metadata_view_id: %s", metadata_view_id)
 
-        # This is the same whether we have a view ID or not
         metadata_values = MetadataValues(root=metadata.get('metadata_values'))
-        # logger.debug(
-        #     "metadata_values: %s",
-        #     json.dumps(metadata_values.model_dump(), indent=4)
-        # )
         metadata_update = UpdateMetadata(metadata_values=metadata_values)
         metadata_exists = self.has_metadata(asset_id, metadata_view_id)
 
@@ -1134,7 +1181,11 @@ class FileIngestRecipe:
         return added_collections
 
     def _trigger_transcoding(
-        self, asset_id: str, file_id: str, file_info: Dict[str, Any]
+        self,
+        asset_id: str,
+        file_id: str,
+        file_info: Dict[str, Any],
+        allow_offline: bool = False
     ) -> Dict[str, Any]:
         """
         Trigger transcoding processes for the asset.
@@ -1143,35 +1194,44 @@ class FileIngestRecipe:
             asset_id: Asset ID
             file_id: File ID
             file_info: File information dictionary
+            allow_offline: Whether to skip transcoding for offline files
 
         Returns:
             Dictionary with results of transcoding operations
         """
         result: Dict[str, Any] = {}
 
-        # Check transcode_include and transcode_ignore patterns
-        # Prioritize include over exclude
+        # Check if file exists/is online
+        file_exists = get_attribute(file_info, "file_exists", True)
+        if allow_offline and not file_exists:
+            logger.info(
+                "Skipping transcoding for offline file: %s",
+                get_attribute(file_info, "file_name")
+            )
+            result["transcoding_skipped"] = True
+            result["offline_file"] = True
+            return result
+
         transcode_ignore = self.storage_settings.get('transcode_ignore', [])
         transcode_include = self.storage_settings.get('transcode_include', [])
         skip_transcoding = False
         must_include = False
 
-        file_name = get_attribute(file_info, "file_name")
+        file_path = get_attribute(file_info, "file_path")
 
-        # If include patterns exist, check if file matches any
         if transcode_include:
             must_include = True
             for pattern in transcode_include:
                 if pattern.startswith('re:/') and pattern.endswith('/'):
                     regex = pattern.lstrip('re:/').rstrip('/')
-                    if re.search(regex, file_name):
+                    if re.search(regex, file_path):
                         logger.info(
                             "File matches transcode_include pattern: %s",
                             pattern
                         )
                         must_include = False
                         break
-                    if re.search(normalize_pattern(regex), file_name):
+                    if re.search(normalize_pattern(regex), file_path):
                         logger.info(
                             "File matches transcode_include pattern: %s",
                             pattern
@@ -1179,7 +1239,7 @@ class FileIngestRecipe:
                         must_include = False
                         break
                 else:
-                    if fnmatch.fnmatch(file_name, pattern):
+                    if fnmatch.fnmatch(file_path, pattern):
                         logger.info(
                             "File matches transcode_include pattern: %s",
                             pattern
@@ -1187,33 +1247,30 @@ class FileIngestRecipe:
                         must_include = False
                         break
 
-        # If we must include this file (didn't match any include pattern)
-        # then skip transcoding
         if must_include:
             logger.info(
                 "File does not match any transcode_include pattern, skipping: %s",
-                file_name
+                file_path
             )
             skip_transcoding = True
         else:
-            # Otherwise check ignore patterns
             for pattern in transcode_ignore:
                 if pattern.startswith('re:/') and pattern.endswith('/'):
                     regex = pattern.lstrip('re:/').rstrip('/')
-                    if re.search(regex, file_name):
+                    if re.search(regex, file_path):
                         logger.info(
                             "File matches transcode_ignore pattern: %s", pattern
                         )
                         skip_transcoding = True
                         break
-                    if re.search(normalize_pattern(regex), file_name):
+                    if re.search(normalize_pattern(regex), file_path):
                         logger.info(
                             "File matches transcode_ignore pattern: %s", pattern
                         )
                         skip_transcoding = True
                         break
                 else:
-                    if fnmatch.fnmatch(file_name, pattern):
+                    if fnmatch.fnmatch(file_path, pattern):
                         logger.info(
                             "File matches transcode_ignore pattern: %s", pattern
                         )
@@ -1228,7 +1285,6 @@ class FileIngestRecipe:
             result["transcoding_skipped"] = True
             return result
 
-        # Check existing transcoding state
         mediainfo_exists = self.has_mediainfo(asset_id, file_id)
         logger.debug("mediainfo_exists: %s", mediainfo_exists)
 
@@ -1245,10 +1301,6 @@ class FileIngestRecipe:
             "has_mediainfo_metadata_history: %s", has_mediainfo_metadata_history
         )
 
-        # has_transcode_history = self.has_transcoding_history(asset_id)
-        # logger.debug("has_transcode_history: %s", has_transcode_history)
-
-        # Trigger mediainfo extraction if needed
         if not mediainfo_exists or not has_mediainfo_metadata_history:
             try:
                 mediainfo_url = self.client.files(
@@ -1285,10 +1337,8 @@ class FileIngestRecipe:
             )
             result["mediainfo_job"] = "skipped"
 
-        # Force `local_proxy_creation` to be False so the actual ISG will do the heavy lifting
         self.storage_settings['local_proxy_creation'] = False
 
-        # Trigger proxy/keyframe generation if needed
         if not result.get("mediainfo_job", False
                           ) and (not proxies_exist or not keyframes_exist):
             if self.storage_settings.get('local_proxy_creation', False):
@@ -1455,12 +1505,64 @@ class FileIngestRecipe:
 
         return False
 
+    def _ensure_collection_hierarchy(self, file_path: str) -> Optional[str]:
+        """
+        Ensure the collection hierarchy exists for the file's directory path
+        if collection directory mapping is enabled.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            Collection ID of the leaf collection or None if collection mapping
+                is disabled
+        """
+        # Check if collection directory mapping is enabled
+        if not self.storage_settings.get(
+            'enable_collection_directory_mapping', False
+        ):
+            logger.debug("Collection directory mapping is not enabled")
+            return None
+
+        try:
+            # Create a recipe instance
+            recipe = CollectionDirectoryMappingRecipe(
+                client=self.client, storage_id=self.storage_id
+            )
+
+            # Get the directory path for the file
+            directory_path = os.path.dirname(self.map_file_path(file_path))
+            logger.debug(
+                "Ensuring collection hierarchy for directory: %s",
+                directory_path
+            )
+
+            # Ensure the collection hierarchy exists
+            collection_id = recipe.ensure_collection_hierarchy(directory_path)
+            if collection_id:
+                logger.info(
+                    "Created/found collection for directory path: %s -> %s",
+                    directory_path, collection_id
+                )
+                return collection_id
+            logger.warning(
+                "Failed to create collection hierarchy for directory: %s",
+                directory_path
+            )
+            return None
+        except Exception as e:
+            logger.error("Error ensuring collection hierarchy: %s", str(e))
+            return None
+
+    # pylint: disable=too-many-positional-arguments
     def create_asset(
         self,
         file_path: str,
         external_id: Optional[str] = None,
         metadata: Optional[Dict] = None,
-        collection_ids: Optional[List[str]] = None
+        collection_ids: Optional[List[str]] = None,
+        md5sum: Optional[str] = None,
+        allow_offline: bool = False
     ) -> Dict[str, Any]:
         """
         Create an asset with associated format, file set, and file.
@@ -1470,27 +1572,29 @@ class FileIngestRecipe:
             external_id: Optional external ID (generated from path if None)
             metadata: Optional metadata to apply
             collection_ids: Optional list of collection IDs to add the asset to
+            md5sum: Optional pre-calculated MD5 checksum to use
+            allow_offline: Whether to allow files that are not accessible
 
         Returns:
             Dictionary with details of the created objects
         """
-        # Validate file and gather basic info
-        file_info = self._check_file_validity(file_path)
+        # Check file validity with the new parameters
+        file_info = self._check_file_validity(file_path, md5sum, allow_offline)
 
-        # Resolve external ID if not provided
         if not external_id:
             external_id = self._resolve_external_id(file_info)
         file_info["external_id"] = external_id
+        logger.debug("Using external ID: %s", external_id)
 
-        # Process metadata from sidecar if available
         if metadata and file_info.get("sidecar_metadata"):
             metadata = self._merge_metadata(
                 metadata, file_info["sidecar_metadata"]
             )
+            logger.debug("Merged provided metadata with sidecar metadata")
         elif file_info.get("sidecar_metadata"):
             metadata = file_info["sidecar_metadata"]
+            logger.debug("Using sidecar metadata")
 
-        # Initialize result with basic file info
         result = {
             "storage_id": self.storage_id,
             "file_path": file_path,
@@ -1501,13 +1605,33 @@ class FileIngestRecipe:
             "directory_path": file_info["directory_path"]
         }
 
-        # Get metadata view ID
         metadata_view_id = self.default_view_id or self.storage_settings.get(
             'metadata_view_id'
         )
         result["metadata_view_id"] = metadata_view_id
+        logger.debug("Using metadata view ID: %s", metadata_view_id)
 
-        # Find or create asset
+        # Ensure collection hierarchy if directory mapping is enabled
+        if self.storage_settings.get(
+            'enable_collection_directory_mapping', False
+        ):
+            collection_id = self._ensure_collection_hierarchy(file_path)
+            if collection_id and collection_ids:
+                # Add the collection ID to the list of collection IDs if not
+                # already present
+                if collection_id not in collection_ids:
+                    collection_ids = list(
+                        collection_ids
+                    )  # Make a copy to avoid modifying the original
+                    collection_ids.append(collection_id)
+                    logger.debug(
+                        "Added directory collection ID to collection IDs: %s",
+                        collection_id
+                    )
+            elif collection_id:
+                collection_ids = [collection_id]
+                logger.debug("Set collection IDs to: %s", collection_ids)
+
         asset_id, asset_existed = self._find_existing_asset(
             external_id, file_info
         )
@@ -1516,43 +1640,36 @@ class FileIngestRecipe:
             asset_existed = False
         result["asset_id"] = asset_id
 
-        # Ensure format exists
         format_id, format_existed = self._ensure_format(asset_id)
         result["format_id"] = format_id
 
-        # Ensure file set exists
         file_set_id, file_set_existed = self._ensure_file_set(
             asset_id, format_id, file_info
         )
         result["file_set_id"] = file_set_id
 
-        # Ensure file exists
         file_id, file_existed = self._ensure_file(
             asset_id, format_id, file_set_id, file_info
         )
         result["file_id"] = file_id
 
-        # Apply metadata if provided
         if metadata:
             metadata_applied = self._apply_metadata(
                 asset_id, metadata, metadata_view_id
             )
             result["metadata_applied"] = metadata_applied
 
-        # Add to collections if provided
         if collection_ids:
             added_collections = self._add_to_collections(
                 asset_id, collection_ids
             )
             result["added_collections"] = added_collections
 
-        # Trigger transcoding processes
         transcoding_result = self._trigger_transcoding(
-            asset_id, file_id, file_info
+            asset_id, file_id, file_info, allow_offline
         )
         result.update(transcoding_result)
 
-        # Create history record
         history_result = self._create_history_record(
             asset_id, asset_existed, format_existed, file_set_existed,
             file_existed
@@ -1562,19 +1679,70 @@ class FileIngestRecipe:
         return result
 
 
+def _load_metadata(metadata_arg: str) -> Optional[Dict[str, Any]]:
+    """
+    Load metadata from an argument value.
+
+    Args:
+        metadata_arg: Metadata argument value which could be:
+            - A raw JSON string if it doesn't start with @
+            - A file path if it starts with @ followed by a path
+            - Stdin indicator if it's @-
+
+    Returns:
+        Dictionary with metadata or None if the value is None or invalid
+
+    Raises:
+        ValueError: If the metadata string, file, or stdin doesn't contain
+            valid JSON
+    """
+    if not metadata_arg:
+        return None
+
+    if not metadata_arg.startswith('@'):
+        # Treat as raw JSON string
+        try:
+            return json.loads(metadata_arg)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Invalid JSON in metadata string: {str(e)}"
+            ) from e
+
+    # Handle file or stdin
+    if metadata_arg == '@-':
+        # Read from stdin
+        logger.debug("Reading metadata from stdin")
+        try:
+            return json.load(sys.stdin)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON from stdin: {str(e)}") from e
+
+    # Handle file path
+    file_path = metadata_arg[1:]  # Remove @ prefix
+    if not os.path.exists(file_path):
+        logger.warning("Metadata file %s not found", file_path)
+        return None
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in metadata file: {str(e)}") from e
+
+
 def _parse_arguments() -> argparse.Namespace:
     """
-    Parse command line arguments for the ISG recipe.
+    Parse command line arguments for the file ingest recipe.
 
     Returns:
         argparse.Namespace: Parsed command line arguments
     """
     parser = argparse.ArgumentParser(
-        description='Iconik Storage Gateway Recipe for asset creation',
+        description='Iconik file ingest recipe for asset creation',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Required arguments
+    # positional arguments
     parser.add_argument(
         'file_path', help='Path to the file to be created as an asset'
     )
@@ -1606,14 +1774,26 @@ def _parse_arguments() -> argparse.Namespace:
     )
     storage_group.add_argument(
         '--mount-mapping',
-        help='Mount mapping in format "local_path:remote_path"'
+        help=
+        'Mount mapping in format "local_path:remote_path". Required when the file_path mount point is different from mount point configured in storage settings.'
     )
 
-    # Asset options
+    # Asset options group with new options
     asset_group = parser.add_argument_group('Asset options')
+    asset_group.add_argument(
+        '--allow-offline-files',
+        action='store_true',
+        help=
+        'Create asset, asset format, asset file set, etc. for offline files, but skip operations requiring the file be online, e.g., checksumming, metadata extraction (i.e., mediainfo), proxy, and keyframe creation'
+    )
     asset_group.add_argument(
         '--external-id',
         help='Custom external ID for the asset (defaults to autogenerated)'
+    )
+    asset_group.add_argument(
+        '--md5sum',
+        help=
+        'Instead of calculating a MD5 checksum, use the checksum provided. Useful when files are not currently accessible.'
     )
     asset_group.add_argument(
         '--view-id', help='Metadata view ID (defaults to storage settings)'
@@ -1625,19 +1805,20 @@ def _parse_arguments() -> argparse.Namespace:
         help='Collection ID to add asset to (can be specified multiple times)'
     )
     asset_group.add_argument(
-        '--metadata-file',
-        help='JSON file containing metadata to apply to the asset'
+        '--metadata',
+        help=
+        'JSON containing metadata to apply to the asset. If the argument does not start with @, the argument is treated as a raw string. If the argument starts with @ followed by a filename, the data is read from the specified file. If the argument is @-, the data is read from stdin (e.g., piped input or keyboard input).'
     )
 
-    # Logging options
+    # Logging group
     log_group = parser.add_argument_group('Logging')
     log_group.add_argument(
         '--debug', action='store_true', help='Enable debug logging'
     )
 
-    # Request options
-    log_group = parser.add_argument_group('Request')
-    log_group.add_argument(
+    # Request group
+    request_group = parser.add_argument_group('Request')
+    request_group.add_argument(
         '--timeout',
         default=60,
         type=int,
@@ -1647,7 +1828,7 @@ def _parse_arguments() -> argparse.Namespace:
     # Parse arguments
     args = parser.parse_args()
 
-    # Validate required parameters from args or environment
+    # Environment variable fallbacks
     if not args.app_id:
         args.app_id = os.environ.get("APP_ID", os.environ.get("ICONIK_APP_ID"))
         if not args.app_id:
@@ -1676,38 +1857,13 @@ def _parse_arguments() -> argparse.Namespace:
     return args
 
 
-def _load_metadata_from_file(metadata_file: str) -> Optional[Dict[str, Any]]:
-    """
-    Load metadata from a JSON file.
-
-    Args:
-        metadata_file: Path to the JSON metadata file
-
-    Returns:
-        Dictionary with metadata or None if file doesn't exist
-
-    Raises:
-        ValueError: If the file exists but doesn't contain valid JSON
-    """
-    if not os.path.exists(metadata_file):
-        logging.warning("Metadata file %s not found", metadata_file)
-        return None
-
-    try:
-        with open(metadata_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in metadata file: {str(e)}") from e
-
-
 def main():
     """
-    Command-line entry point for the IconikStorageGatewayRecipe.
+    Command-line entry point for the FileIngestRecipe.
 
     Parses arguments, sets up logging, and executes the asset creation
     process with the specified parameters.
     """
-    # Parse command line arguments
     args = _parse_arguments()
 
     if args.debug:
@@ -1716,8 +1872,11 @@ def main():
             '%(asctime)s - %(filename)s:%(lineno)s - %(name)s - %(funcName)s - %(levelname)s - %(message)s'
         )
         logger.setLevel(logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
 
-    # Initialize client
+    logger.debug("Starting file ingest with arguments: %s", args)
+
     client = PythonikClient(
         app_id=args.app_id,
         auth_token=args.auth_token,
@@ -1725,16 +1884,15 @@ def main():
         base_url=args.base_url
     )
 
-    # Load metadata from file if specified
     metadata = None
-    if args.metadata_file:
+    if args.metadata:
         try:
-            metadata = _load_metadata_from_file(args.metadata_file)
+            metadata = _load_metadata(args.metadata)
+            logger.debug("Loaded metadata: %s", json.dumps(metadata, indent=2))
         except ValueError as e:
             logger.error(str(e))
             sys.exit(1)
 
-    # Initialize recipe
     recipe = FileIngestRecipe(
         client=client,
         storage_id=args.storage_id,
@@ -1742,13 +1900,14 @@ def main():
         mount_mapping=args.mount_mapping
     )
 
-    # Create asset
     try:
         result = recipe.create_asset(
             file_path=args.file_path,
             external_id=args.external_id,
             metadata=metadata,
-            collection_ids=args.collection_ids
+            collection_ids=args.collection_ids,
+            md5sum=args.md5sum,
+            allow_offline=args.allow_offline_files
         )
 
         print("\nAsset creation complete!")
@@ -1765,18 +1924,22 @@ def main():
                 f"Added to collections: {', '.join(get_attribute(result, 'added_collections'))}"
             )
 
-        if result.get("mediainfo_job") == "skipped":
-            print("Mediainfo extraction skipped - already exists")
-        elif result.get("mediainfo_job") is True:
-            print("Mediainfo extraction triggered")
-
-        if result.get("proxy_job") == "skipped":
-            print("Proxy/keyframe generation skipped - already exists")
-        elif result.get("proxy_job") is True:
-            print("Proxy/keyframe generation triggered")
-
-        if result.get("transcoding_skipped"):
+        if result.get("offline_file", False):
+            print(
+                "File processed in offline mode - no transcoding or checksum generation"
+            )
+        elif result.get("transcoding_skipped"):
             print("Transcoding skipped - file matches ignore pattern")
+        else:
+            if result.get("mediainfo_job") == "skipped":
+                print("Mediainfo extraction skipped - already exists")
+            elif result.get("mediainfo_job") is True:
+                print("Mediainfo extraction triggered")
+
+            if result.get("proxy_job") == "skipped":
+                print("Proxy/keyframe generation skipped - already exists")
+            elif result.get("proxy_job") is True:
+                print("Proxy/keyframe generation triggered")
 
         if result.get("history_created"):
             print(
