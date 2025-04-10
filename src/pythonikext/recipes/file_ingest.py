@@ -1,3 +1,6 @@
+"""
+File ingest recipe for pythonik-ext
+"""
 import argparse
 import fnmatch
 import json
@@ -30,7 +33,7 @@ from ..utils import calculate_md5
 logger = get_logger(__name__)
 
 
-class IconikStorageGatewayRecipe:
+class FileIngestRecipe:
     """
     Recipe for creating assets in iconik that mirrors ISG behavior.
     Handles all steps of asset creation with intelligent retry/resume.
@@ -1732,7 +1735,7 @@ def main():
             sys.exit(1)
 
     # Initialize recipe
-    recipe = IconikStorageGatewayRecipe(
+    recipe = FileIngestRecipe(
         client=client,
         storage_id=args.storage_id,
         default_view_id=args.view_id,
