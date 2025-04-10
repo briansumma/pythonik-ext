@@ -32,6 +32,9 @@ pip install pythonik-ext[all]
   - File checksum utilities for finding files by MD5
   - Improved error handling
   - Better typing support
+- Recipe modules for advanced automation:
+  - Collection directory mapping for mirroring file system structures
+  - File ingest with intelligent retry/resume capabilities
 
 ## Usage
 
@@ -64,6 +67,79 @@ response = client.files().get_files_by_checksum(
 response = client.files().get_files_by_checksum("path/to/your/file.txt")
 ```
 
+### Recipe Modules
+
+#### Collection Directory Mapping
+
+Maps file system directory structure to collections in iconik:
+
+```python
+from pythonikext import ExtendedPythonikClient
+from pythonikext.recipes.collection_directory_mapping import CollectionDirectoryMappingRecipe
+
+client = ExtendedPythonikClient(app_id="your_app_id", auth_token="your_auth_token", timeout=60)
+
+# Create recipe instance
+recipe = CollectionDirectoryMappingRecipe(
+    client=client,
+    storage_id="your_storage_id"
+)
+
+# Map a directory structure
+result = recipe.map_directory_structure("/path/to/directory")
+
+# Or ensure a specific collection path exists
+collection_id = recipe.ensure_collection_hierarchy("/path/to/directory/file.txt")
+```
+
+You can also use the command line interface:
+
+```bash
+python -m pythonikext.recipes.collection_directory_mapping \
+    --app-id your_app_id \
+    --auth-token your_auth_token \
+    --storage-id your_storage_id \
+    --root-path /path/to/directory
+```
+
+#### File Ingest
+
+Provides intelligent file ingest capabilities with advanced features:
+
+```python
+from pythonikext import ExtendedPythonikClient
+from pythonikext.recipes.file_ingest import FileIngestRecipe
+
+client = ExtendedPythonikClient(app_id="your_app_id", auth_token="your_auth_token", timeout=60)
+
+# Create recipe instance
+recipe = FileIngestRecipe(
+    client=client,
+    storage_id="your_storage_id"
+)
+
+# Ingest a file with various options
+result = recipe.create_asset(
+    file_path="/path/to/file.mp4",
+    metadata={"title": "My Video", "description": "A great video"},
+    collection_ids=["collection1_id", "collection2_id"]
+)
+
+print(f"Created asset with ID: {result['asset_id']}")
+```
+
+Command line usage:
+
+```bash
+python -m pythonikext.recipes.file_ingest \
+    --app-id your_app_id \
+    --auth-token your_auth_token \
+    --storage-id your_storage_id \
+    --collection-id collection1_id \
+    --metadata '{"title": "My Video", "description": "A great video"}' \
+    /path/to/file.mp4
+```
+
 ### Using Just the Extended Specs
 
 ```python
@@ -71,12 +147,12 @@ from pythonik.client import PythonikClient
 from pythonikext.specs.files import ExtendedFilesSpec
 
 # Use the original client
-client = PythonikClient(app_id="your_app_id", auth_token="your_auth_token")
+client = PythonikClient(app_id="your_app_id", auth_token="your_auth_token", timeout=60)
 
 # Create an extended files spec
 extended_files = ExtendedFilesSpec(client.session,
-                                   timeout=client.timeout,
-                                   base_url=client.base_url)
+                                  timeout=client.timeout,
+                                  base_url=client.base_url)
 
 # Use extended functionality
 response = extended_files.get_files_by_checksum("path/to/your/file.txt")

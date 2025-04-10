@@ -86,8 +86,7 @@ def example_with_print_suppression():
 
         # Create client and make API calls
         # All print statements from the pythonik library will be suppressed
-        # pylint: disable=unused-variable
-        client = ExtendedPythonikClient(
+        _ = ExtendedPythonikClient(
             app_id="demo-app-id", auth_token="demo-token", timeout=10
         )
 
@@ -112,8 +111,7 @@ def example_with_print_redirection():
 
         # Create client and make API calls
         # All print statements from the pythonik library will be logged
-        # pylint: disable=unused-variable
-        client = ExtendedPythonikClient(
+        _ = ExtendedPythonikClient(
             app_id="demo-app-id", auth_token="demo-token", timeout=10
         )
 

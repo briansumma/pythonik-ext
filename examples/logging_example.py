@@ -130,8 +130,7 @@ def example_client_integration():
     configure_logging(LogConfig(level="INFO"))
 
     # Initialize client (normally you would use real credentials)
-    # pylint: disable=unused-variable
-    client = ExtendedPythonikClient(
+    _ = ExtendedPythonikClient(
         app_id="demo-app-id",
         auth_token="demo-token",
         timeout=10,
